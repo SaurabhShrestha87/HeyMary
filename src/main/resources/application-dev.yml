@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/integrations_db_dev
+    username: postgres
+    password: postgres
+  
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        use_sql_comments: false
+
+logging:
+  level:
+    heymary.co.integrations: DEBUG
+    org.springframework.web: DEBUG
+    org.hibernate: ERROR
+    org.hibernate.SQL: OFF
+    org.hibernate.type.descriptor.sql.BasicBinder: OFF
+    org.hibernate.type.descriptor.sql: OFF
+    org.hibernate.stat: OFF
+
