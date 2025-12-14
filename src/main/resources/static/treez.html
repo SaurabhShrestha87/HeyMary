@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Treez Integration Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .stat-card p {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .filters {
+            padding: 30px;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .filter-group input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .integrations-container {
+            padding: 30px;
+        }
+
+        .integration-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s;
+        }
+
+        .integration-card:hover {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+            border-color: #667eea;
+        }
+
+        .integration-card.no-card {
+            border-color: #ffc107;
+            background: #fffbf0;
+        }
+
+        .integration-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .integration-header h3 {
+            color: #333;
+            font-size: 1.3em;
+        }
+
+        .integration-id {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .integration-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .data-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 6px;
+        }
+
+        .data-section h4 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .data-row {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .data-row:last-child {
+            border-bottom: none;
+        }
+
+        .data-label {
+            font-weight: 600;
+            color: #555;
+            font-size: 0.9em;
+        }
+
+        .data-value {
+            color: #333;
+            word-break: break-word;
+        }
+
+        .data-value.empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .points-badge {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .status-installed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-not-installed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .no-card-notice {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 15px;
+            text-align: center;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌳 Treez Integration Dashboard</h1>
+            <p>View Treez customers and their linked Boomerangme cards</p>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <h3 id="stat-total">-</h3>
+                <p>Total Treez Customers</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-with-cards">-</h3>
+                <p>With Cards</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-without-cards">-</h3>
+                <p>Without Cards</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-linkage">-</h3>
+                <p>Linkage Rate</p>
+            </div>
+        </div>
+
+        <div class="filters">
+            <div class="filter-group">
+                <input type="text" id="filter-search" placeholder="Search by email, phone, or ID...">
+            </div>
+            <div class="filter-actions">
+                <button class="btn-primary" onclick="loadIntegrations()">Search</button>
+                <button class="btn-secondary" onclick="clearFilters()">Clear</button>
+                <button class="btn-secondary" onclick="loadStats()">Refresh Stats</button>
+            </div>
+        </div>
+
+        <div class="integrations-container">
+            <div id="loading" class="loading">Loading integrations...</div>
+            <div id="error" class="error" style="display: none;"></div>
+            <div id="integrations-list"></div>
+        </div>
+
+        <div class="pagination">
+            <button onclick="previousPage()" id="btn-prev">Previous</button>
+            <span id="page-info">Page 1 of 1</span>
+            <button onclick="nextPage()" id="btn-next">Next</button>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        const pageSize = 50;
+        let totalPages = 1;
+
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            try {
+                let date;
+                if (Array.isArray(dateString)) {
+                    const [year, month, day, hour, minute, second] = dateString;
+                    date = new Date(year, month - 1, day, hour || 0, minute || 0, second || 0);
+                } else {
+                    date = new Date(dateString);
+                }
+                if (isNaN(date.getTime())) return '-';
+                return date.toLocaleString();
+            } catch (e) {
+                return dateString || '-';
+            }
+        }
+
+        function formatValue(value) {
+            if (value === null || value === undefined || value === '') return '<span class="empty">-</span>';
+            return value;
+        }
+
+        function buildQueryParams() {
+            const params = new URLSearchParams();
+            params.append('page', currentPage);
+            params.append('size', pageSize);
+            
+            const search = document.getElementById('filter-search').value.trim();
+            if (search) {
+                params.append('search', search);
+            }
+
+            return params.toString();
+        }
+
+        async function loadIntegrations() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const list = document.getElementById('integrations-list');
+
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            list.innerHTML = '';
+
+            try {
+                const queryParams = buildQueryParams();
+                const response = await fetch(`/api/treez/integrations?${queryParams}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const integrations = data.integrations || [];
+                totalPages = data.totalPages || 1;
+
+                if (integrations.length === 0) {
+                    list.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">No integrations found</div>';
+                } else {
+                    integrations.forEach(integration => {
+                        const card = integration.boomerangme;
+                        const treez = integration.treez || {};
+                        const hasCard = card !== null;
+
+                        const cardHtml = `
+                            <div class="integration-card ${!hasCard ? 'no-card' : ''}">
+                                <div class="integration-header">
+                                    <div>
+                                        <h3>${formatValue(treez.firstName)} ${formatValue(treez.lastName)}</h3>
+                                        <div class="integration-id">Customer ID: ${integration.externalCustomerId || '-'} | Internal ID: ${integration.customerId}</div>
+                                    </div>
+                                    ${integration.totalPoints !== null && integration.totalPoints !== undefined ? 
+                                        `<span class="points-badge">${integration.totalPoints} Points</span>` : ''}
+                                </div>
+                                <div class="integration-content">
+                                    <div class="data-section">
+                                        <h4>🌳 Treez Data</h4>
+                                        <div class="data-row">
+                                            <span class="data-label">Email:</span>
+                                            <span class="data-value">${formatValue(treez.email)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Phone:</span>
+                                            <span class="data-value">${formatValue(treez.phone)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">First Name:</span>
+                                            <span class="data-value">${formatValue(treez.firstName)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Last Name:</span>
+                                            <span class="data-value">${formatValue(treez.lastName)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Birth Date:</span>
+                                            <span class="data-value">${formatValue(treez.birthDate)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">External ID:</span>
+                                            <span class="data-value">${formatValue(integration.externalCustomerId)}</span>
+                                        </div>
+                                    </div>
+                                    ${hasCard ? `
+                                    <div class="data-section">
+                                        <h4>💳 Boomerangme Card</h4>
+                                        <div class="data-row">
+                                            <span class="data-label">Email:</span>
+                                            <span class="data-value">${formatValue(card.email)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Phone:</span>
+                                            <span class="data-value">${formatValue(card.phone)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">First Name:</span>
+                                            <span class="data-value">${formatValue(card.firstName)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Last Name:</span>
+                                            <span class="data-value">${formatValue(card.lastName)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Cardholder ID:</span>
+                                            <span class="data-value">${formatValue(card.cardholderId)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Serial Number:</span>
+                                            <span class="data-value">${formatValue(card.serialNumber)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Status:</span>
+                                            <span class="data-value">
+                                                <span class="status-badge ${card.status === 'installed' ? 'status-installed' : 'status-not-installed'}">
+                                                    ${formatValue(card.status)}
+                                                </span>
+                                            </span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Bonus Balance:</span>
+                                            <span class="data-value">${formatValue(card.bonusBalance)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Balance:</span>
+                                            <span class="data-value">${formatValue(card.balance)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Visits:</span>
+                                            <span class="data-value">${formatValue(card.countVisits)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Stamps:</span>
+                                            <span class="data-value">${formatValue(card.numberStampsTotal)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Rewards:</span>
+                                            <span class="data-value">${formatValue(card.numberRewardsUnused)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Issued At:</span>
+                                            <span class="data-value">${formatDate(card.issuedAt)}</span>
+                                        </div>
+                                        <div class="data-row">
+                                            <span class="data-label">Installed At:</span>
+                                            <span class="data-value">${formatDate(card.installedAt)}</span>
+                                        </div>
+                                    </div>
+                                    ` : `
+                                    <div class="data-section">
+                                        <div class="no-card-notice">
+                                            ⚠️ No Boomerangme card linked to this customer
+                                        </div>
+                                    </div>
+                                    `}
+                                </div>
+                                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0; font-size: 0.85em; color: #666;">
+                                    Created: ${formatDate(integration.createdAt)} | 
+                                    Updated: ${formatDate(integration.updatedAt)} | 
+                                    Synced: ${formatDate(integration.syncedAt)}
+                                </div>
+                            </div>
+                        `;
+                        list.innerHTML += cardHtml;
+                    });
+                }
+
+                updatePagination();
+                loading.style.display = 'none';
+            } catch (err) {
+                loading.style.display = 'none';
+                error.style.display = 'block';
+                error.textContent = `Error loading integrations: ${err.message}`;
+                console.error('Error loading integrations:', err);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/treez/integrations/stats');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const stats = await response.json();
+                document.getElementById('stat-total').textContent = stats.totalTreezCustomers || 0;
+                document.getElementById('stat-with-cards').textContent = stats.withCards || 0;
+                document.getElementById('stat-without-cards').textContent = stats.withoutCards || 0;
+                document.getElementById('stat-linkage').textContent = (stats.linkageRate || 0).toFixed(1) + '%';
+            } catch (err) {
+                console.error('Error loading stats:', err);
+            }
+        }
+
+        function updatePagination() {
+            document.getElementById('page-info').textContent = `Page ${currentPage + 1} of ${totalPages}`;
+            document.getElementById('btn-prev').disabled = currentPage === 0;
+            document.getElementById('btn-next').disabled = currentPage >= totalPages - 1;
+        }
+
+        function previousPage() {
+            if (currentPage > 0) {
+                currentPage--;
+                loadIntegrations();
+            }
+        }
+
+        function nextPage() {
+            if (currentPage < totalPages - 1) {
+                currentPage++;
+                loadIntegrations();
+            }
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-search').value = '';
+            currentPage = 0;
+            loadIntegrations();
+        }
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadIntegrations();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadStats();
+                loadIntegrations();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>
+

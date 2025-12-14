@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Properties -->
+    <property name="LOG_PATH" value="logs" />
+    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n" />
+    
+    <!-- Console Appender (for Docker logs) -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+    
+    <!-- Main Application Log File -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/integrations.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/integrations-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+    
+    <!-- Webhook-specific Log Files -->
+    
+    <!-- Unified Webhook Log (all webhooks) -->
+    <appender name="WEBHOOK_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/webhooks.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/webhooks-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+    
+    <!-- Boomerangme Webhook Log (separate) -->
+    <appender name="BOOMERANGME_WEBHOOK_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/boomerangme-webhooks.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/boomerangme-webhooks-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>300MB</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+    
+    <!-- Treez Webhook Log (separate) -->
+    <appender name="TREEZ_WEBHOOK_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/treez-webhooks.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/treez-webhooks-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>300MB</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+    
+    <!-- Dutchie Webhook Log (separate) -->
+    <appender name="DUTCHIE_WEBHOOK_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/dutchie-webhooks.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/dutchie-webhooks-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>300MB</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+    
+    <!-- Error Log File (all errors across the application) -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/errors.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/errors-%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>60</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+    </appender>
+    
+    <!-- Async Appenders for better performance -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="FILE" />
+        <queueSize>512</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+    
+    <appender name="ASYNC_WEBHOOK_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="WEBHOOK_FILE" />
+        <queueSize>256</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+    
+    <appender name="ASYNC_BOOMERANGME_WEBHOOK_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="BOOMERANGME_WEBHOOK_FILE" />
+        <queueSize>256</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+    
+    <appender name="ASYNC_TREEZ_WEBHOOK_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="TREEZ_WEBHOOK_FILE" />
+        <queueSize>256</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+    
+    <appender name="ASYNC_DUTCHIE_WEBHOOK_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="DUTCHIE_WEBHOOK_FILE" />
+        <queueSize>256</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+    
+    <appender name="ASYNC_ERROR_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="ERROR_FILE" />
+        <queueSize>256</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+    </appender>
+    
+    <!-- Logger for Webhook Controllers -->
+    
+    <!-- Boomerangme Webhook Controller - logs to BOTH unified and specific file -->
+    <logger name="heymary.co.integrations.controller.BoomerangmeWebhookController" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="ASYNC_WEBHOOK_FILE" />  <!-- Unified webhook log -->
+        <appender-ref ref="ASYNC_BOOMERANGME_WEBHOOK_FILE" />  <!-- Boomerangme-specific log -->
+        <appender-ref ref="ASYNC_ERROR_FILE" />
+    </logger>
+    
+    <!-- Treez Webhook Controller - logs to BOTH unified and specific file -->
+    <logger name="heymary.co.integrations.controller.TreezWebhookController" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="ASYNC_WEBHOOK_FILE" />  <!-- Unified webhook log -->
+        <appender-ref ref="ASYNC_TREEZ_WEBHOOK_FILE" />  <!-- Treez-specific log -->
+        <appender-ref ref="ASYNC_ERROR_FILE" />
+    </logger>
+    
+    <!-- Dutchie Webhook Controller - logs to BOTH unified and specific file -->
+    <logger name="heymary.co.integrations.controller.DutchieWebhookController" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="ASYNC_WEBHOOK_FILE" />  <!-- Unified webhook log -->
+        <appender-ref ref="ASYNC_DUTCHIE_WEBHOOK_FILE" />  <!-- Dutchie-specific log -->
+        <appender-ref ref="ASYNC_ERROR_FILE" />
+    </logger>
+    
+    <!-- Webhook Services - also log to unified webhook file -->
+    <logger name="heymary.co.integrations.service.TreezWebhookService" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="ASYNC_WEBHOOK_FILE" />
+        <appender-ref ref="ASYNC_TREEZ_WEBHOOK_FILE" />
+        <appender-ref ref="ASYNC_ERROR_FILE" />
+    </logger>
+    
+    <!-- Logger for Services -->
+    <logger name="heymary.co.integrations.service" level="INFO" />
+    
+    <!-- Logger for Controllers -->
+    <logger name="heymary.co.integrations.controller" level="INFO" />
+    
+    <!-- Suppress noisy logs from third-party libraries -->
+    <logger name="org.springframework" level="INFO" />
+    <logger name="org.springframework.web" level="INFO" />
+    <logger name="org.springframework.security" level="INFO" />
+    <logger name="org.hibernate" level="ERROR" />
+    <logger name="org.hibernate.SQL" level="OFF" />
+    <logger name="com.zaxxer.hikari" level="WARN" />
+    
+    <!-- Root Logger -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="ASYNC_FILE" />
+        <appender-ref ref="ASYNC_ERROR_FILE" />
+    </root>
+    
+    <!-- Profile-specific configurations -->
+    <springProfile name="dev">
+        <logger name="heymary.co.integrations" level="DEBUG" />
+    </springProfile>
+    
+    <springProfile name="prod">
+        <logger name="heymary.co.integrations" level="INFO" />
+        <logger name="org.springframework.web" level="WARN" />
+    </springProfile>
+    
+</configuration>
+

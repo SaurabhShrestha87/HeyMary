@@ -34,7 +34,7 @@ services:
       DATABASE_URL: jdbc:postgresql://postgres:5432/integrations_db
       DATABASE_USERNAME: postgres
       DATABASE_PASSWORD: postgres
-      BOOMERANGME_API_URL: ${BOOMERANGME_API_URL:-https://api.boomerangme.cards}
+      BOOMERANGME_API_URL: ${BOOMERANGME_API_URL:-https://api.digitalwallet.cards}
       BOOMERANGME_API_KEY: ${BOOMERANGME_API_KEY:-}
       DUTCHIE_API_URL: ${DUTCHIE_API_URL:-https://api.pos.dutchie.com}
       DUTCHIE_API_KEY: ${DUTCHIE_API_KEY:-}
@@ -42,6 +42,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
     ports:
       - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
       interval: 30s

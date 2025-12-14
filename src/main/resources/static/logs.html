@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync Logs Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .stat-card p {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .filters {
+            padding: 30px;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .filters h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-group label {
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+            font-size: 0.9em;
+        }
+
+        .filter-group select,
+        .filter-group input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .logs-container {
+            padding: 30px;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9em;
+        }
+
+        thead {
+            background: #f8f9fa;
+            position: sticky;
+            top: 0;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+        }
+
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-retrying {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 5px;
+            font-size: 0.85em;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+
+        .json-preview {
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: monospace;
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .expand-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+
+        .expand-btn:hover {
+            background: #5568d3;
+        }
+
+        .detail-row {
+            display: none;
+        }
+
+        .detail-row.expanded {
+            display: table-row;
+        }
+
+        .detail-cell {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 2px solid #667eea;
+        }
+
+        .detail-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .detail-section {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .detail-section h4 {
+            margin-bottom: 10px;
+            color: #667eea;
+            font-size: 1em;
+        }
+
+        .json-display {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .json-display pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .detail-section.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .no-data {
+            color: #999;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Sync Logs Dashboard</h1>
+            <p>Monitor integration sync operations in real-time</p>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <h3 id="stat-total">-</h3>
+                <p>Total Syncs</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-success">-</h3>
+                <p>Successful</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-failed">-</h3>
+                <p>Failed</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-retrying">-</h3>
+                <p>Retrying</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="stat-rate">-</h3>
+                <p>Success Rate</p>
+            </div>
+        </div>
+
+        <div class="filters">
+            <h2>Filters</h2>
+            <div class="filter-grid">
+                <div class="filter-group">
+                    <label>Merchant ID</label>
+                    <input type="text" id="filter-merchant" placeholder="All merchants">
+                </div>
+                <div class="filter-group">
+                    <label>Status</label>
+                    <select id="filter-status">
+                        <option value="">All Statuses</option>
+                        <option value="SUCCESS">Success</option>
+                        <option value="FAILED">Failed</option>
+                        <option value="RETRYING">Retrying</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Sync Type</label>
+                    <select id="filter-sync-type">
+                        <option value="">All Types</option>
+                        <option value="ORDER">Order</option>
+                        <option value="CUSTOMER">Customer</option>
+                        <option value="POINTS">Points</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Entity Type</label>
+                    <select id="filter-entity-type">
+                        <option value="">All Entities</option>
+                        <option value="ORDER">Order</option>
+                        <option value="CUSTOMER">Customer</option>
+                        <option value="POINTS">Points</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Source System</label>
+                    <select id="filter-source-system">
+                        <option value="">All Sources</option>
+                        <option value="DUTCHIE">Dutchie</option>
+                        <option value="BOOMERANGME">Boomerangme</option>
+                        <option value="TREEZ">Treez</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Target System</label>
+                    <select id="filter-target-system">
+                        <option value="">All Targets</option>
+                        <option value="DUTCHIE">Dutchie</option>
+                        <option value="BOOMERANGME">Boomerangme</option>
+                        <option value="TREEZ">Treez</option>
+                    </select>
+                </div>
+            </div>
+            <div class="filter-actions">
+                <button class="btn-primary" onclick="loadLogs()">Apply Filters</button>
+                <button class="btn-secondary" onclick="clearFilters()">Clear Filters</button>
+                <button class="btn-secondary" onclick="loadStats()">Refresh Stats</button>
+            </div>
+        </div>
+
+        <div class="logs-container">
+            <div id="loading" class="loading">Loading logs...</div>
+            <div id="error" class="error" style="display: none;"></div>
+            <table id="logs-table" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Merchant ID</th>
+                        <th>Sync Type</th>
+                        <th>Entity Type</th>
+                        <th>Entity ID</th>
+                        <th>Source → Target</th>
+                        <th>Status</th>
+                        <th>Retry Count</th>
+                        <th>Created At</th>
+                        <th>Completed At</th>
+                        <th>Error Message</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="logs-tbody">
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pagination">
+            <button onclick="previousPage()" id="btn-prev">Previous</button>
+            <span id="page-info">Page 1 of 1</span>
+            <button onclick="nextPage()" id="btn-next">Next</button>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        const pageSize = 50;
+        let totalPages = 1;
+
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            try {
+                // Handle both ISO string and array format [year, month, day, hour, minute, second]
+                let date;
+                if (Array.isArray(dateString)) {
+                    // LocalDateTime from Jackson might come as array
+                    const [year, month, day, hour, minute, second] = dateString;
+                    date = new Date(year, month - 1, day, hour || 0, minute || 0, second || 0);
+                } else {
+                    date = new Date(dateString);
+                }
+                if (isNaN(date.getTime())) return '-';
+                return date.toLocaleString();
+            } catch (e) {
+                return dateString || '-';
+            }
+        }
+
+        function formatJson(jsonString) {
+            if (!jsonString) return '';
+            try {
+                // Try to parse and format if it's a JSON string
+                const parsed = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
+                return JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                // If it's not valid JSON, return as-is
+                return jsonString;
+            }
+        }
+
+        function toggleDetails(logId) {
+            const detailRow = document.getElementById(`detail-${logId}`);
+            const btn = document.getElementById(`btn-${logId}`);
+            
+            if (detailRow && btn) {
+                if (detailRow.classList.contains('expanded')) {
+                    detailRow.classList.remove('expanded');
+                    btn.textContent = 'View Details';
+                } else {
+                    detailRow.classList.add('expanded');
+                    btn.textContent = 'Hide Details';
+                }
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function getStatusBadge(status) {
+            const badges = {
+                'SUCCESS': '<span class="status-badge status-success">Success</span>',
+                'FAILED': '<span class="status-badge status-failed">Failed</span>',
+                'RETRYING': '<span class="status-badge status-retrying">Retrying</span>'
+            };
+            return badges[status] || status;
+        }
+
+        function buildQueryParams() {
+            const params = new URLSearchParams();
+            params.append('page', currentPage);
+            params.append('size', pageSize);
+            
+            const merchantId = document.getElementById('filter-merchant').value.trim();
+            const status = document.getElementById('filter-status').value;
+            const syncType = document.getElementById('filter-sync-type').value;
+            const entityType = document.getElementById('filter-entity-type').value;
+            const sourceSystem = document.getElementById('filter-source-system').value;
+            const targetSystem = document.getElementById('filter-target-system').value;
+
+            if (merchantId) params.append('merchantId', merchantId);
+            if (status) params.append('status', status);
+            if (syncType) params.append('syncType', syncType);
+            if (entityType) params.append('entityType', entityType);
+            if (sourceSystem) params.append('sourceSystem', sourceSystem);
+            if (targetSystem) params.append('targetSystem', targetSystem);
+
+            return params.toString();
+        }
+
+        async function loadLogs() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const table = document.getElementById('logs-table');
+            const tbody = document.getElementById('logs-tbody');
+
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            table.style.display = 'none';
+
+            try {
+                const queryParams = buildQueryParams();
+                const response = await fetch(`/api/sync-logs?${queryParams}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const logs = data.logs || [];
+                totalPages = data.totalPages || 1;
+                
+                // Debug: log first log to see structure
+                if (logs.length > 0) {
+                    console.log('Sample log:', logs[0]);
+                }
+
+                tbody.innerHTML = '';
+
+                if (logs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px; color: #666;">No logs found</td></tr>';
+                } else {
+                    logs.forEach((log) => {
+                        // Handle both camelCase and snake_case field names
+                        const merchantId = log.merchant_id || log.merchantId || '-';
+                        const syncType = log.sync_type || log.syncType || '-';
+                        const entityType = log.entity_type || log.entityType || '-';
+                        const entityId = log.entity_id || log.entityId || '-';
+                        const sourceSystem = log.source_system || log.sourceSystem || '-';
+                        const targetSystem = log.target_system || log.targetSystem || '-';
+                        const retryCount = log.retry_count || log.retryCount || 0;
+                        const createdAt = log.created_at || log.createdAt;
+                        const completedAt = log.completed_at || log.completedAt;
+                        const errorMessage = log.error_message || log.errorMessage;
+                        const requestPayload = log.request_payload || log.requestPayload;
+                        const responsePayload = log.response_payload || log.responsePayload;
+                        
+                        const logId = log.id;
+                        
+                        // Main row
+                        const row = document.createElement('tr');
+                        row.className = 'log-row';
+                        row.innerHTML = `
+                            <td>${logId}</td>
+                            <td>${merchantId}</td>
+                            <td>${syncType}</td>
+                            <td>${entityType}</td>
+                            <td>${entityId}</td>
+                            <td>${sourceSystem} → ${targetSystem}</td>
+                            <td>${getStatusBadge(log.status)}</td>
+                            <td>${retryCount}</td>
+                            <td>${formatDate(createdAt)}</td>
+                            <td>${formatDate(completedAt)}</td>
+                            <td>${errorMessage ? `<div class="error-message">${escapeHtml(errorMessage)}</div>` : '-'}</td>
+                            <td><button class="expand-btn" onclick="toggleDetails(${logId})" id="btn-${logId}">View Details</button></td>
+                        `;
+                        tbody.appendChild(row);
+                        
+                        // Detail row
+                        const detailRow = document.createElement('tr');
+                        detailRow.className = 'detail-row';
+                        detailRow.id = `detail-${logId}`;
+                        detailRow.innerHTML = `
+                            <td colspan="12" class="detail-cell">
+                                <div class="detail-content">
+                                    ${requestPayload ? `
+                                    <div class="detail-section">
+                                        <h4>📤 Request Payload</h4>
+                                        <div class="json-display">
+                                            <pre>${escapeHtml(formatJson(requestPayload))}</pre>
+                                        </div>
+                                    </div>
+                                    ` : ''}
+                                    ${responsePayload ? `
+                                    <div class="detail-section">
+                                        <h4>📥 Response Payload</h4>
+                                        <div class="json-display">
+                                            <pre>${escapeHtml(formatJson(responsePayload))}</pre>
+                                        </div>
+                                    </div>
+                                    ` : ''}
+                                    ${errorMessage ? `
+                                    <div class="detail-section full-width">
+                                        <h4>❌ Error Details</h4>
+                                        <div class="error-message" style="padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                                            ${escapeHtml(errorMessage)}
+                                        </div>
+                                    </div>
+                                    ` : ''}
+                                    ${!requestPayload && !responsePayload && !errorMessage ? `
+                                    <div class="detail-section full-width">
+                                        <p class="no-data">No additional details available for this log entry.</p>
+                                    </div>
+                                    ` : ''}
+                                </div>
+                            </td>
+                        `;
+                        tbody.appendChild(detailRow);
+                    });
+                }
+
+                updatePagination();
+                loading.style.display = 'none';
+                table.style.display = 'table';
+            } catch (err) {
+                loading.style.display = 'none';
+                error.style.display = 'block';
+                error.textContent = `Error loading logs: ${err.message}`;
+                console.error('Error loading logs:', err);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/sync-logs/stats');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const stats = await response.json();
+                document.getElementById('stat-total').textContent = stats.total || 0;
+                document.getElementById('stat-success').textContent = stats.success || 0;
+                document.getElementById('stat-failed').textContent = stats.failed || 0;
+                document.getElementById('stat-retrying').textContent = stats.retrying || 0;
+                document.getElementById('stat-rate').textContent = (stats.successRate || 0).toFixed(1) + '%';
+            } catch (err) {
+                console.error('Error loading stats:', err);
+            }
+        }
+
+        function updatePagination() {
+            document.getElementById('page-info').textContent = `Page ${currentPage + 1} of ${totalPages}`;
+            document.getElementById('btn-prev').disabled = currentPage === 0;
+            document.getElementById('btn-next').disabled = currentPage >= totalPages - 1;
+        }
+
+        function previousPage() {
+            if (currentPage > 0) {
+                currentPage--;
+                loadLogs();
+            }
+        }
+
+        function nextPage() {
+            if (currentPage < totalPages - 1) {
+                currentPage++;
+                loadLogs();
+            }
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-merchant').value = '';
+            document.getElementById('filter-status').value = '';
+            document.getElementById('filter-sync-type').value = '';
+            document.getElementById('filter-entity-type').value = '';
+            document.getElementById('filter-source-system').value = '';
+            document.getElementById('filter-target-system').value = '';
+            currentPage = 0;
+            loadLogs();
+        }
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadLogs();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadStats();
+                loadLogs();
+            }, 30000);
+        });
+    </script>
+</body>
+</html>
+

@@ -2,6 +2,7 @@ package heymary.co.integrations.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.converter.StringHttpMessageConverter;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.nio.charset.StandardCharsets;
@@ -13,6 +14,12 @@ public class WebConfig implements WebMvcConfigurer {
     // This ensures UTF-8 encoding for string bodies
     public StringHttpMessageConverter stringHttpMessageConverter() {
         return new StringHttpMessageConverter(StandardCharsets.UTF_8);
+    }
+
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/static/**")
+                .addResourceLocations("classpath:/static/");
     }
 }
 

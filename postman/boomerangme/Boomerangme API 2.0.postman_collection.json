@@ -1,0 +1,1510 @@
+{
+	"info": {
+		"_postman_id": "9fb915e9-f76f-446e-99d1-3346e6a7b6b5",
+		"name": "Boomerangme API 2.0",
+		"description": "Complete collection for Boomerangme Digital Wallet Cards API v2.0\n\nBased on OpenAPI specification: digitalwallet_boomerangme.OAPI.doc.json\n\nBefore using:\n1. Set your environment variables (see Variables tab)\n2. Get API key from Boomerangme dashboard\n3. Get template ID for your loyalty program\n\nNote: Base URL can be either:\n- https://api.boomerangme.cards (legacy)\n- https://api.digitalwallet.cards (current)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29956922",
+		"_collection_link": "https://gold-trinity-431795.postman.co/workspace/HeyMary~b2a059d7-034c-4f0d-9d3c-70354efe5ef0/collection/29956922-9fb915e9-f76f-446e-99d1-3346e6a7b6b5?action=share&source=collection_link&creator=29956922"
+	},
+	"item": [
+		{
+			"name": "Cards",
+			"item": [
+				{
+					"name": "Create Card",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"templateId\": 979611,\n  \"customerId\": \"{{customer_id}}\",\n  \"customFields\": [\n    {\n      \"id\": 1,\n      \"value\": \"custom value\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards"
+							]
+						},
+						"description": "Creates a new loyalty card for a customer.\n\nRequired:\n- templateId (integer): Card template ID\n- customerId (string): Customer ID (must create customer first)\n\nOptional:\n- customFields (array): Array of custom field objects with id and value"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Card",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}"
+							]
+						},
+						"description": "Retrieves complete information about a card by its ID (serial number).\n\nReturns:\n- Card details\n- Cardholder information\n- Current balance\n- Card status\n- Installation details"
+					},
+					"response": []
+				},
+				{
+					"name": "List Cards",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards?page=1&itemsPerPage=50&templateId=&customerId=&customerEmail=&customerPhone=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (default: 1)"
+								},
+								{
+									"key": "itemsPerPage",
+									"value": "50",
+									"description": "Items per page (default: 30, max: 1000)"
+								},
+								{
+									"key": "templateId",
+									"value": "",
+									"description": "Filter by template ID",
+									"disabled": true
+								},
+								{
+									"key": "customerId",
+									"value": "",
+									"description": "Filter by customer ID (UUID)",
+									"disabled": true
+								},
+								{
+									"key": "customerEmail",
+									"value": "",
+									"description": "Filter by customer email",
+									"disabled": true
+								},
+								{
+									"key": "customerPhone",
+									"value": "",
+									"description": "Filter by customer phone",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List all cards with optional filters and pagination.\n\nQuery Parameters:\n- page: Page number (default: 1)\n- itemsPerPage: Items per page (default: 30, max: 1000)\n- templateId: Filter by template ID\n- customerId: Filter by customer ID (UUID)\n- customerEmail: Filter by customer email\n- customerPhone: Filter by customer phone"
+					},
+					"response": []
+				},
+				{
+					"name": "Edit Card",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"customFields\": [\n    {\n      \"id\": 1,\n      \"value\": \"updated value\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}"
+							]
+						},
+						"description": "Edit card custom fields.\n\nRequired:\n- customFields (array): Array of custom field objects with id and value (minItems: 1)"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Card",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}"
+							]
+						},
+						"description": "Delete a card by ID (serial number).\n\n⚠️ Use with caution - this is permanent!"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Scores",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"scores\": 100,\n  \"comment\": \"Purchase of $100.00 - Order #12345\",\n  \"purchaseSum\": 100.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-scores",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-scores"
+							]
+						},
+						"description": "Add loyalty points (scores) to a card.\n\nRequired:\n- scores (integer): Number of points to add (minimum: 1)\n\nOptional:\n- comment (string): Reason for adding points\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Scores",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"scores\": 50,\n  \"comment\": \"Redeemed $5 discount - Order #12346\",\n  \"purchaseSum\": 50.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-scores",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-scores"
+							]
+						},
+						"description": "Subtract loyalty points (scores) from a card.\n\nRequired:\n- scores (integer): Number of points to subtract (minimum: 1)\n\nOptional:\n- comment (string): Reason for subtracting points\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Point",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"points\": 10.5,\n  \"comment\": \"Points awarded\",\n  \"purchaseSum\": 100.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-point",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-point"
+							]
+						},
+						"description": "Add point to card.\n\nRequired:\n- points (number): Number of points to add (minimum: 0, exclusive)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Point",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"points\": 5.0,\n  \"comment\": \"Points redeemed\",\n  \"purchaseSum\": 50.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-point",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-point"
+							]
+						},
+						"description": "Subtract point from card.\n\nRequired:\n- points (number): Number of points to subtract (minimum: 0, exclusive)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Visit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"visits\": 1,\n  \"comment\": \"Customer visit - Store checkin\",\n  \"purchaseSum\": 0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-visit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-visit"
+							]
+						},
+						"description": "Add visit to card. For cards with visit mechanics.\n\nRequired:\n- visits (integer): Number of visits to add (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Visit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"visits\": 1,\n  \"comment\": \"Visit reversal\",\n  \"purchaseSum\": 0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-visit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-visit"
+							]
+						},
+						"description": "Subtract visit from card.\n\nRequired:\n- visits (integer): Number of visits to subtract (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Purchase",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 100.00,\n  \"comment\": \"Purchase of $100.00\",\n  \"purchaseSum\": 100.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-purchase",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-purchase"
+							]
+						},
+						"description": "Add purchase to card. For cards with spend mechanics.\n\nRequired:\n- amount (number): Purchase amount (minimum: 0, exclusive)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Total purchase sum"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Purchase",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 50.00,\n  \"comment\": \"Purchase reversal\",\n  \"purchaseSum\": 50.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-purchase",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-purchase"
+							]
+						},
+						"description": "Subtract purchase from card.\n\nRequired:\n- amount (number): Purchase amount to subtract (minimum: 0, exclusive)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Total purchase sum"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Stamp",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"stamps\": 1,\n  \"comment\": \"Stamp earned\",\n  \"purchaseSum\": 25.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-stamp",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-stamp"
+							]
+						},
+						"description": "Add stamp to card.\n\nRequired:\n- stamps (integer): Number of stamps to add (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Stamp",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"stamps\": 1,\n  \"comment\": \"Stamp reversal\",\n  \"purchaseSum\": 0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-stamp",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-stamp"
+							]
+						},
+						"description": "Subtract stamp from card.\n\nRequired:\n- stamps (integer): Number of stamps to subtract (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Reward",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rewards\": 1,\n  \"comment\": \"Reward earned\",\n  \"purchaseSum\": 100.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-reward",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-reward"
+							]
+						},
+						"description": "Add reward to card.\n\nRequired:\n- rewards (integer): Number of rewards to add (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Reward",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"rewards\": 1,\n  \"comment\": \"Reward reversal\",\n  \"purchaseSum\": 0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-reward",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-reward"
+							]
+						},
+						"description": "Subtract reward from card.\n\nRequired:\n- rewards (integer): Number of rewards to subtract (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Transaction Amount",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 1000,\n  \"comment\": \"Transaction amount added\",\n  \"purchaseSum\": 100.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/add-transaction-amount",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"add-transaction-amount"
+							]
+						},
+						"description": "Add amount to card.\n\nRequired:\n- amount (integer): Amount in cents to add (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Subtract Transaction Amount",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 500,\n  \"comment\": \"Transaction amount subtracted\",\n  \"purchaseSum\": 50.00\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/subtract-transaction-amount",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"subtract-transaction-amount"
+							]
+						},
+						"description": "Subtract amount from card.\n\nRequired:\n- amount (integer): Amount in cents to subtract (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Receive Reward",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": 1,\n  \"comment\": \"Reward received\",\n  \"purchaseSum\": 0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/receive-reward",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"receive-reward"
+							]
+						},
+						"description": "Receive reward.\n\nRequired:\n- id (integer): Reward tier ID (minimum: 1)\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Redeem Coupon",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"comment\": \"Coupon redeemed\",\n  \"purchaseSum\": 0\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/redeem-coupon",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"redeem-coupon"
+							]
+						},
+						"description": "Redeem coupon.\n\nOptional:\n- comment (string): Reason\n- purchaseSum (number): Purchase amount"
+					},
+					"response": []
+				},
+				{
+					"name": "Set Expiration Date",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"expiresAt\": \"2025-12-31T23:59:59+00:00\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/set-expiration-date",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"set-expiration-date"
+							]
+						},
+						"description": "Set card expiration date.\n\nOptional:\n- expiresAt (string): Expiration date in format Y-m-dTH:i:sP (e.g., 2025-12-31T23:59:59+00:00)"
+					},
+					"response": []
+				},
+				{
+					"name": "Set Membership Tier",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"tierId\": 1,\n  \"period\": \"month\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/cards/{{serial_number}}/set-membership-tier",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"cards",
+								"{{serial_number}}",
+								"set-membership-tier"
+							]
+						},
+						"description": "Set membership card tier and period.\n\nRequired:\n- tierId (integer): Membership tier ID\n- period (string): Period - one of: day, week, month, year"
+					},
+					"response": []
+				}
+			],
+			"description": "Card management endpoints - create, retrieve, search, edit, delete, and manage card balances"
+		},
+		{
+			"name": "Customers",
+			"item": [
+				{
+					"name": "Create Customer",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"firstName\": \"John\",\n  \"surname\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"email\": \"john.doe@example.com\",\n  \"gender\": 1,\n  \"dateOfBirth\": \"1990-01-15\",\n  \"externalUserId\": \"ext_12345\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/customers",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"customers"
+							]
+						},
+						"description": "Create a new customer.\n\nRequired:\n- firstName (string): Customer's first name\n- phone OR email (string): At least one must be provided\n\nOptional:\n- surname (string): Last name\n- phone (string): Phone number\n- email (string): Email address\n- gender (integer): 0 - unknown, 1 - male, 2 - female\n- dateOfBirth (string): Date of birth (format: YYYY-MM-DD)\n- externalUserId (string): External user ID for integration"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Customer",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/customers/{{customer_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"customers",
+								"{{customer_id}}"
+							]
+						},
+						"description": "Retrieves complete information about a customer by ID.\n\nReturns:\n- Customer details\n- Segments\n- Contact information"
+					},
+					"response": []
+				},
+				{
+					"name": "List Customers",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/customers?page=1&itemsPerPage=50&phone=&email=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"customers"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (default: 1)"
+								},
+								{
+									"key": "itemsPerPage",
+									"value": "50",
+									"description": "Items per page (default: 30, max: 1000)"
+								},
+								{
+									"key": "phone",
+									"value": "",
+									"description": "Filter by phone",
+									"disabled": true
+								},
+								{
+									"key": "email",
+									"value": "",
+									"description": "Filter by email",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List all customers with optional filters and pagination.\n\nQuery Parameters:\n- page: Page number (default: 1)\n- itemsPerPage: Items per page (default: 30, max: 1000)\n- phone: Filter by phone number\n- email: Filter by email address"
+					},
+					"response": []
+				},
+				{
+					"name": "Edit Customer",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"{{customer_id}}\",\n  \"firstName\": \"John\",\n  \"surname\": \"Doe Updated\",\n  \"email\": \"john.doe.updated@example.com\",\n  \"gender\": 1,\n  \"dateOfBirth\": \"1990-01-15\",\n  \"externalUserId\": \"ext_12345\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/customers/{{customer_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"customers",
+								"{{customer_id}}"
+							]
+						},
+						"description": "Edit customer information.\n\nRequired:\n- id (string): Customer ID\n\nOptional:\n- firstName (string): First name\n- surname (string): Last name\n- email (string): Email address\n- gender (integer): 0 - unknown, 1 - male, 2 - female\n- dateOfBirth (string): Date of birth\n- externalUserId (string): External user ID"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Customer",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/customers/{{customer_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"customers",
+								"{{customer_id}}"
+							]
+						},
+						"description": "Delete a customer by ID.\n\n⚠️ Use with caution - this is permanent!"
+					},
+					"response": []
+				}
+			],
+			"description": "Customer management endpoints - create, retrieve, search, edit, and delete customers"
+		},
+		{
+			"name": "Templates",
+			"item": [
+				{
+					"name": "List Templates",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/templates?page=1&itemsPerPage=50",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"templates"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (default: 1)"
+								},
+								{
+									"key": "itemsPerPage",
+									"value": "50",
+									"description": "Items per page (default: 30, max: 1000)"
+								}
+							]
+						},
+						"description": "List all card templates with pagination.\n\nReturns:\n- Template configurations\n- Card type information\n- Custom fields\n- Reward tiers\n- Membership tiers"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Template",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/templates/{{template_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"templates",
+								"{{template_id}}"
+							]
+						},
+						"description": "Get details about a specific card template.\n\nReturns:\n- Template configuration\n- Custom fields\n- Reward tiers\n- Membership tiers"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Reward Tier",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"10% Discount\",\n  \"type\": 2,\n  \"threshold\": 100,\n  \"value\": 10.0,\n  \"valueLimit\": 50.0,\n  \"usageLimit\": 5\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/templates/{{template_id}}/reward_tiers",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"templates",
+								"{{template_id}}",
+								"reward_tiers"
+							]
+						},
+						"description": "Create a reward tier for a template.\n\nRequired:\n- name (string): Reward tier name\n- type (integer): 0 - custom, 1 - amount, 2 - percent\n- value (number): Reward value\n\nOptional:\n- threshold (integer): Points threshold (default: 0)\n- valueLimit (number): Maximum value limit\n- usageLimit (integer): Usage limit"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Reward Tier",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/templates/{{template_id}}/reward_tiers/{{reward_tier_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"templates",
+								"{{template_id}}",
+								"reward_tiers",
+								"{{reward_tier_id}}"
+							]
+						},
+						"description": "Delete a reward tier from a template.\n\n⚠️ Use with caution - this is permanent!"
+					},
+					"response": []
+				}
+			],
+			"description": "Template management endpoints - list, get, and manage reward tiers"
+		},
+		{
+			"name": "Operations",
+			"item": [
+				{
+					"name": "List Operations",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/operations?page=1&itemsPerPage=50&templateId=&customerId=&cardId=&startDate=&endDate=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"operations"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (default: 1)"
+								},
+								{
+									"key": "itemsPerPage",
+									"value": "50",
+									"description": "Items per page (default: 30, max: 1000)"
+								},
+								{
+									"key": "templateId",
+									"value": "",
+									"description": "Filter by template ID",
+									"disabled": true
+								},
+								{
+									"key": "customerId",
+									"value": "",
+									"description": "Filter by customer ID (UUID)",
+									"disabled": true
+								},
+								{
+									"key": "cardId",
+									"value": "",
+									"description": "Filter by card ID",
+									"disabled": true
+								},
+								{
+									"key": "startDate",
+									"value": "",
+									"description": "Start date (format: Y-m-d)",
+									"disabled": true
+								},
+								{
+									"key": "endDate",
+									"value": "",
+									"description": "End date (format: Y-m-d)",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List all operations (transactions) with optional filters and pagination.\n\nQuery Parameters:\n- page: Page number (default: 1)\n- itemsPerPage: Items per page (default: 30, max: 1000)\n- templateId: Filter by template ID\n- customerId: Filter by customer ID (UUID)\n- cardId: Filter by card ID\n- startDate: Start date (format: Y-m-d)\n- endDate: End date (format: Y-m-d)\n\nReturns transaction history including:\n- Points added/subtracted\n- Visits\n- Purchases\n- Redemptions"
+					},
+					"response": []
+				}
+			],
+			"description": "Operations/Transaction history endpoints"
+		},
+		{
+			"name": "Statistics",
+			"item": [
+				{
+					"name": "Revenue Statistics",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/statistics/revenue?companyId=&templateId=&startDate=&endDate=",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"statistics",
+								"revenue"
+							],
+							"query": [
+								{
+									"key": "companyId",
+									"value": "",
+									"description": "Filter by company ID",
+									"disabled": true
+								},
+								{
+									"key": "templateId",
+									"value": "",
+									"description": "Filter by template ID",
+									"disabled": true
+								},
+								{
+									"key": "startDate",
+									"value": "",
+									"description": "Start date (format: Y-m-d)",
+									"disabled": true
+								},
+								{
+									"key": "endDate",
+									"value": "",
+									"description": "End date (format: Y-m-d)",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Get revenue statistics for your loyalty program.\n\nQuery Parameters:\n- companyId: Filter by company ID\n- templateId: Filter by template ID\n- startDate: Start date (format: Y-m-d)\n- endDate: End date (format: Y-m-d)\n\nReturns:\n- Total cost\n- Revenue total\n- Revenue by day\n- ROI\n- ROI by day\n- LTV (Lifetime Value)"
+					},
+					"response": []
+				}
+			],
+			"description": "Analytics and reporting endpoints"
+		},
+		{
+			"name": "Marketplace API",
+			"item": [
+				{
+					"name": "Accrue (Accrual Action)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-App-Token",
+								"value": "{{app_token}}",
+								"type": "text",
+								"description": "App static authorization token"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"check\": {\n    \"amount\": 10000,\n    \"currency\": \"USD\",\n    \"selections\": [\n      {\n        \"id\": \"SKU123\",\n        \"groupId\": \"GROUP1\",\n        \"displayName\": \"Product Name\",\n        \"price\": 10000,\n        \"quantity\": 1,\n        \"totalPrice\": 10000\n      }\n    ]\n  },\n  \"phone\": \"+1234567890\",\n  \"email\": \"customer@example.com\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"serialNumber\": \"{{serial_number}}\",\n  \"transactionId\": \"txn_12345\",\n  \"credentials\": [\n    {\n      \"name\": \"merchantId\",\n      \"value\": \"merchant_123\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/marketplace/accrue",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"marketplace",
+								"accrue"
+							]
+						},
+						"description": "Perform an accrual action on a purchase.\n\nA customer's phone number, email, or card serial number is required to find or register a loyalty card.\n\nRequired:\n- check: Purchase check details\n  - amount (integer): Total amount in cents\n  - currency (string): Currency in ISO 4217 3-letter code\n  - selections (array): Array of purchase items\n- transactionId (string): Unique transaction ID\n- credentials (array): Merchant credentials (minItems: 1)\n\nOptional:\n- phone (string): Customer's phone\n- email (string): Customer's email\n- firstName (string): Customer's first name\n- lastName (string): Customer's last name\n- serialNumber (string): Customer's loyalty card serial number"
+					},
+					"response": []
+				},
+				{
+					"name": "Reverse (Refund Action)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-App-Token",
+								"value": "{{app_token}}",
+								"type": "text",
+								"description": "App static authorization token"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"transactionId\": \"txn_12345\",\n  \"credentials\": [\n    {\n      \"name\": \"merchantId\",\n      \"value\": \"merchant_123\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/marketplace/reverse",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"marketplace",
+								"reverse"
+							]
+						},
+						"description": "Revert a previously performed accrual action using the transaction ID.\n\nRequired:\n- transactionId (string): Unique transaction ID from original accrual\n- credentials (array): Merchant credentials (minItems: 1)"
+					},
+					"response": []
+				},
+				{
+					"name": "Resolve Credentials",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-App-Token",
+								"value": "{{app_token}}",
+								"type": "text",
+								"description": "App static authorization token"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"names\": [\"merchantId\", \"apiToken\"],\n  \"credentials\": [\n    {\n      \"name\": \"merchantId\",\n      \"value\": \"merchant_123\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/marketplace/resolve-credentials",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"marketplace",
+								"resolve-credentials"
+							]
+						},
+						"description": "Retrieve a bundle of app installation credentials using any one of them.\n\nFor example, on a service webhook or at the application service level, you may only have the merchant ID and need to obtain the service API token.\n\nRequired:\n- names (array): Optional credential names to return. If not specified, all merchant credentials are returned.\n- credentials (array): Merchant credentials (minItems: 1)"
+					},
+					"response": []
+				}
+			],
+			"description": "Marketplace API endpoints for accrual, reversal, and credential resolution"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://api.digitalwallet.cards",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "YOUR_API_KEY_HERE",
+			"type": "string"
+		},
+		{
+			"key": "app_token",
+			"value": "YOUR_APP_TOKEN_HERE",
+			"type": "string"
+		},
+		{
+			"key": "template_id",
+			"value": "YOUR_TEMPLATE_ID_HERE",
+			"type": "string"
+		},
+		{
+			"key": "serial_number",
+			"value": "CARD_SERIAL_NUMBER_HERE",
+			"type": "string"
+		},
+		{
+			"key": "customer_id",
+			"value": "CUSTOMER_ID_HERE",
+			"type": "string"
+		},
+		{
+			"key": "test_email",
+			"value": "test@example.com",
+			"type": "string"
+		},
+		{
+			"key": "test_phone",
+			"value": "+1234567890",
+			"type": "string"
+		},
+		{
+			"key": "reward_tier_id",
+			"value": "REWARD_TIER_ID_HERE",
+			"type": "string"
+		}
+	]
+}

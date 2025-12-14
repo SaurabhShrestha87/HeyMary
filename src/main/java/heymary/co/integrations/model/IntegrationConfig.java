@@ -28,6 +28,11 @@ public class IntegrationConfig {
     @Column(name = "merchant_id", nullable = false, unique = true)
     private String merchantId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "integration_type", nullable = false, length = 50)
+    @Builder.Default
+    private IntegrationType integrationType = IntegrationType.DUTCHIE; // Default for backward compatibility
+
     @Column(name = "boomerangme_api_key", nullable = false, length = 500)
     private String boomerangmeApiKey;
 
@@ -45,6 +50,27 @@ public class IntegrationConfig {
 
     @Column(name = "boomerangme_program_id")
     private String boomerangmeProgramId;
+
+    @Column(name = "default_template_id", length = 100)
+    private Integer defaultTemplateId;
+
+    // Treez-specific configuration
+    @Column(name = "treez_api_key", length = 500)
+    private String treezApiKey;
+
+    @Column(name = "treez_auth_header", length = 500)
+    private String treezAuthHeader;
+
+    @Column(name = "treez_dispensary_id", length = 100)
+    private String treezDispensaryId;
+
+    @Column(name = "treez_webhook_secret", length = 500)
+    private String treezWebhookSecret;  // Bearer token for webhook authentication
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "customer_match_type", length = 20)
+    @Builder.Default
+    private CustomerMatchType customerMatchType = CustomerMatchType.EMAIL; // Default to EMAIL for backward compatibility
 
     @Column(name = "enabled", nullable = false)
     @Builder.Default

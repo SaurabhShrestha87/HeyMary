@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import heymary.co.integrations.model.IntegrationConfig;
+import heymary.co.integrations.model.IntegrationType;
 import heymary.co.integrations.repository.IntegrationConfigRepository;
 import heymary.co.integrations.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,14 +42,11 @@ public class DutchieOrderPollingService {
      */
     @Scheduled(fixedDelayString = "${app.dutchie.polling.interval:10000}", initialDelay = 5000) // Default: 10 seconds, start after 5 seconds
     public void pollForNewOrders() {
-        log.info("Starting scheduled order polling from Dutchie");
-        
         try {
             // Get all enabled integration configs
-            List<IntegrationConfig> configs = integrationConfigRepository.findAllByEnabledTrue();
+            List<IntegrationConfig> configs = integrationConfigRepository.findAllByIntegrationTypeAndEnabledTrue(IntegrationType.DUTCHIE);
             
             if (configs.isEmpty()) {
-                log.info("No enabled integrations found, skipping order polling");
                 return;
             }
             

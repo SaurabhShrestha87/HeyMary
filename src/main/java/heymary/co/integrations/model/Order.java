@@ -14,11 +14,12 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "orders", indexes = {
     @Index(name = "idx_orders_merchant_id", columnList = "merchant_id"),
-    @Index(name = "idx_orders_dutchie_order_id", columnList = "dutchie_order_id"),
+    @Index(name = "idx_orders_external_order_id", columnList = "external_order_id"),
+    @Index(name = "idx_orders_integration_type", columnList = "integration_type"),
     @Index(name = "idx_orders_customer_id", columnList = "customer_id"),
     @Index(name = "idx_orders_sync_status", columnList = "points_synced, synced_at")
 }, uniqueConstraints = {
-    @UniqueConstraint(name = "uk_orders_dutchie_order_id", columnNames = "dutchie_order_id")
+    @UniqueConstraint(name = "uk_orders_external_order", columnNames = {"merchant_id", "external_order_id", "integration_type"})
 })
 @Data
 @NoArgsConstructor
@@ -33,8 +34,12 @@ public class Order {
     @Column(name = "merchant_id", nullable = false)
     private String merchantId;
 
-    @Column(name = "dutchie_order_id", nullable = false, unique = true)
-    private String dutchieOrderId;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "integration_type", nullable = false, length = 50)
+    private IntegrationType integrationType;
+
+    @Column(name = "external_order_id", nullable = false, length = 100)
+    private String externalOrderId; // dutchie_order_id or treez_ticket_id
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")

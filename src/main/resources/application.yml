@@ -35,7 +35,7 @@ spring:
 # Boomerangme API Configuration
 boomerangme:
   api:
-    base-url: ${BOOMERANGME_API_URL:https://api.boomerangme.cards}
+    base-url: ${BOOMERANGME_API_URL:https://api.digitalwallet.cards}
     api-key: ${BOOMERANGME_API_KEY:}
     timeout: 30000
 
@@ -50,6 +50,8 @@ dutchie:
 
 # Application Configuration
 app:
+  admin:
+    api-key: ${ADMIN_API_KEY:admin-default-key-change-me}
   retry:
     max-attempts: 3
     initial-interval: 1000
@@ -74,11 +76,28 @@ management:
       prometheus:
         enabled: true
 
+# OpenAPI/Swagger Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+    display-request-duration: true
+    defaultModelsExpandDepth: 1
+    defaultModelExpandDepth: 1
+    tryItOutEnabled: true
+  show-actuator: false
+
 # Logging Configuration
 logging:
   level:
     root: INFO
-    heymary.co.integrations: INFO  # Changed to INFO to ensure all logs show
+    heymary.co.integrations: INFO
+    heymary.co.integrations.controller: DEBUG  # Enable DEBUG for webhook controllers
     org.springframework.web: INFO
     org.springframework.security: INFO
     org.hibernate: ERROR
@@ -91,7 +110,10 @@ logging:
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
   file:
     name: logs/integrations.log
-    max-size: 10MB
-    max-history: 30
-    total-size-cap: 1GB
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30
+      total-size-cap: 1GB
+      file-name-pattern: logs/integrations-%d{yyyy-MM-dd}.%i.log
 

@@ -2,7 +2,20 @@ package heymary.co.integrations.controller;
 
 import heymary.co.integrations.model.IntegrationConfig;
 import heymary.co.integrations.repository.IntegrationConfigRepository;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -16,6 +29,8 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/integration-configs")
 @RequiredArgsConstructor
+@Tag(name = "Integration Configuration", description = "Manage merchant integration configurations for Dutchie and Boomerangme")
+@SecurityRequirement(name = "AdminApiKey")
 public class IntegrationConfigController {
 
     private final IntegrationConfigRepository integrationConfigRepository;

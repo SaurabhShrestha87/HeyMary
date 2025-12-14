@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import heymary.co.integrations.model.Customer;
 import heymary.co.integrations.model.IntegrationConfig;
+import heymary.co.integrations.model.IntegrationType;
 import heymary.co.integrations.model.Order;
 import heymary.co.integrations.model.SyncLog;
 import heymary.co.integrations.repository.CustomerRepository;
@@ -55,12 +56,14 @@ public class OrderSyncService {
             if (dutchieOrderId == null) {
                 log.warn("Transaction missing transactionId, skipping sync");
                 createSyncLog(merchantId, SyncLog.SyncType.ORDER, "unknown", 
-                        SyncLog.SyncStatus.FAILED, "Transaction missing transactionId", transactionData.toString());
+                        SyncLog.SyncStatus.FAILED, "Transaction missing transactionId", toJsonString(transactionData));
                 return;
             }
             
             // Check if order already synced (idempotency)
-            Optional<Order> existingOrder = orderRepository.findByDutchieOrderId(dutchieOrderId);
+            Optional<Order> existingOrder = orderRepository.findByMerchantIdAndExternalOrderIdAndIntegrationType(
+                    merchantId, dutchieOrderId, IntegrationType.DUTCHIE);
+
             if (existingOrder.isPresent() && existingOrder.get().getPointsSynced()) {
                 log.info("Transaction {} already synced, skipping", dutchieOrderId);
                 return;
@@ -119,30 +122,32 @@ public class OrderSyncService {
                 return;
             }
 
-            // Find or create customer
+            // Find or create customer (for Dutchie)
             Customer customer = null;
             if (customerId != null) {
                 customer = customerRepository
-                        .findByMerchantIdAndDutchieCustomerId(merchantId, customerId)
+                        .findByMerchantIdAndExternalCustomerIdAndIntegrationType(
+                                merchantId, customerId, IntegrationType.DUTCHIE)
                         .orElse(null);
                 
                 if (customer == null || customer.getBoomerangmeCardId() == null) {
                     log.warn("Customer {} not found or not linked to Boomerangme, skipping order sync", customerId);
                     createSyncLog(merchantId, SyncLog.SyncType.ORDER, dutchieOrderId, 
-                            SyncLog.SyncStatus.FAILED, "Customer not found or not linked", transactionData.toString());
+                            SyncLog.SyncStatus.FAILED, "Customer not found or not linked", toJsonString(transactionData));
                     return;
                 }
             } else {
                 log.warn("Order {} has no customer, skipping sync", dutchieOrderId);
                 createSyncLog(merchantId, SyncLog.SyncType.ORDER, dutchieOrderId, 
-                        SyncLog.SyncStatus.FAILED, "Order has no customer", transactionData.toString());
+                        SyncLog.SyncStatus.FAILED, "Order has no customer", toJsonString(transactionData));
                     return;
             }
 
             // Save order to database
             Order order = existingOrder.orElse(Order.builder()
                     .merchantId(merchantId)
-                    .dutchieOrderId(dutchieOrderId)
+                    .integrationType(IntegrationType.DUTCHIE)
+                    .externalOrderId(dutchieOrderId)
                     .orderTotal(orderTotal)
                     .orderDate(orderDate)
                     .pointsEarned(pointsEarned)
@@ -162,19 +167,18 @@ public class OrderSyncService {
                     reason
             ).block(); // Block since we're in async method
 
-            // Update order as synced
+            log.info("Successfully sent {} points to Boomerangme for order {}. Waiting for webhook to update balance.", 
+                    pointsEarned, dutchieOrderId);
+
+            // Update order as synced (points sent to Boomerangme)
+            // Note: We don't update customer points here - wait for CardBalanceUpdatedEvent webhook
             order.setPointsSynced(true);
             order.setSyncedAt(LocalDateTime.now());
             orderRepository.save(order);
 
-            // Update customer total points
-            customer.setTotalPoints(customer.getTotalPoints() + pointsEarned);
-            customer.setSyncedAt(LocalDateTime.now());
-            customerRepository.save(customer);
-
             // Create success sync log
             createSyncLog(merchantId, SyncLog.SyncType.ORDER, dutchieOrderId, 
-                    SyncLog.SyncStatus.SUCCESS, null, transactionData.toString(), 
+                    SyncLog.SyncStatus.SUCCESS, null, toJsonString(transactionData), 
                     String.format("{\"points_added\": %d}", pointsEarned));
 
             log.info("Successfully synced transaction {} with {} points", dutchieOrderId, pointsEarned);
@@ -186,7 +190,7 @@ public class OrderSyncService {
                     : (transactionData.has("id") ? transactionData.get("id").asText() : "unknown");
             
             createSyncLog(merchantId, SyncLog.SyncType.ORDER, transactionId, 
-                    SyncLog.SyncStatus.FAILED, e.getMessage(), transactionData.toString());
+                    SyncLog.SyncStatus.FAILED, e.getMessage(), toJsonString(transactionData));
             
             deadLetterQueueService.addToDeadLetterQueue(
                     merchantId,
@@ -194,7 +198,7 @@ public class OrderSyncService {
                     DeadLetterQueueService.EntityType.ORDER,
                     transactionId,
                     e.getMessage(),
-                    transactionData.toString()
+                    toJsonString(transactionData)
             );
         }
     }
@@ -229,6 +233,18 @@ public class OrderSyncService {
         }
 
         syncLogRepository.save(syncLog);
+    }
+    
+    /**
+     * Convert JsonNode to JSON string safely
+     */
+    private String toJsonString(JsonNode jsonNode) {
+        try {
+            return objectMapper.writeValueAsString(jsonNode);
+        } catch (Exception e) {
+            log.warn("Failed to convert JsonNode to string: {}", e.getMessage());
+            return "{}";
+        }
     }
 }
 

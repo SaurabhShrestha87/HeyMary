@@ -1,6 +1,8 @@
 package heymary.co.integrations.repository;
 
 import heymary.co.integrations.model.IntegrationConfig;
+import heymary.co.integrations.model.IntegrationType;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -13,5 +15,6 @@ public interface IntegrationConfigRepository extends JpaRepository<IntegrationCo
     Optional<IntegrationConfig> findByMerchantIdAndEnabledTrue(String merchantId);
     Optional<IntegrationConfig> findByIdAndEnabledTrue(Long id);
     List<IntegrationConfig> findAllByEnabledTrue();
+    List<IntegrationConfig> findAllByIntegrationTypeAndEnabledTrue(IntegrationType integrationType);
 }
 

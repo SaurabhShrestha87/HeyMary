@@ -1,5 +1,6 @@
 package heymary.co.integrations.repository;
 
+import heymary.co.integrations.model.IntegrationType;
 import heymary.co.integrations.model.Order;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -11,8 +12,12 @@ import java.util.Optional;
 
 @Repository
 public interface OrderRepository extends JpaRepository<Order, Long> {
-    Optional<Order> findByDutchieOrderId(String dutchieOrderId);
-    Optional<Order> findByMerchantIdAndDutchieOrderId(String merchantId, String dutchieOrderId);
+    /**
+     * Find an order by merchant ID, external order ID, and integration type
+     * An order is unique by merchant_id + external_order_id + integration_type
+     */
+    Optional<Order> findByMerchantIdAndExternalOrderIdAndIntegrationType(
+            String merchantId, String externalOrderId, IntegrationType integrationType);
     
     /**
      * Find the latest order date for a specific merchant

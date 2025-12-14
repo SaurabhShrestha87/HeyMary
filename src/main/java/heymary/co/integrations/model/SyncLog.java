@@ -82,11 +82,11 @@ public class SyncLog {
     }
 
     public enum EntityType {
-        ORDER, CUSTOMER
+        ORDER, CUSTOMER, POINTS
     }
 
     public enum SystemType {
-        DUTCHIE, BOOMERANGME
+        DUTCHIE, BOOMERANGME, TREEZ
     }
 
     public enum SyncStatus {
