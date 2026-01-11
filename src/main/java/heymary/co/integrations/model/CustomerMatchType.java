@@ -2,7 +2,7 @@ package heymary.co.integrations.model;
 
 /**
  * Enum representing the field used to match Treez customers with Boomerangme cards.
- * This determines whether cards are fetched and linked based on phone number or email address.
+ * This determines whether cards are fetched and linked based on phone number, email address, or both.
  */
 public enum CustomerMatchType {
     /**
@@ -13,7 +13,13 @@ public enum CustomerMatchType {
     /**
      * Match customers and cards based on email address
      */
-    EMAIL("email", "Email Address");
+    EMAIL("email", "Email Address"),
+    
+    /**
+     * Match customers and cards based on both phone number AND email address
+     * This provides the most accurate matching by requiring both fields to match
+     */
+    BOTH("both", "Phone and Email");
 
     private final String code;
     private final String displayName;
@@ -36,7 +42,7 @@ public enum CustomerMatchType {
      */
     public static CustomerMatchType fromCode(String code) {
         if (code == null || code.isEmpty()) {
-            return EMAIL; // Default to EMAIL if not specified
+            return BOTH; // Default to BOTH if not specified
         }
         for (CustomerMatchType type : values()) {
             if (type.code.equalsIgnoreCase(code)) {

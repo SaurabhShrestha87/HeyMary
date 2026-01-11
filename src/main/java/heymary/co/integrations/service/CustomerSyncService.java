@@ -2,6 +2,7 @@ package heymary.co.integrations.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import heymary.co.integrations.exception.ApiException;
 import heymary.co.integrations.model.Card;
 import heymary.co.integrations.model.Customer;
 import heymary.co.integrations.model.CustomerMatchType;
@@ -32,6 +33,7 @@ public class CustomerSyncService {
 
     private final BoomerangmeApiClient boomerangmeApiClient;
     private final DutchieApiClient dutchieApiClient;
+    private final TreezApiClient treezApiClient;
     private final CustomerRepository customerRepository;
     private final CardRepository cardRepository;
     private final IntegrationConfigRepository integrationConfigRepository;
@@ -509,7 +511,7 @@ public class CustomerSyncService {
         // Get match type from config
         CustomerMatchType matchType = config.getCustomerMatchType() != null 
                 ? config.getCustomerMatchType() 
-                : CustomerMatchType.EMAIL; // Default to EMAIL
+                : CustomerMatchType.BOTH; // Default to BOTH
         
         // Step 1: Check if customer already exists by match field (email or phone based on config)
         Customer existingCustomer = findExistingTreezCustomer(merchantId, card, matchType);
@@ -557,7 +559,7 @@ public class CustomerSyncService {
      * For phone matching, normalizes Boomerangme phone (removes "1" prefix) to match Treez format
      */
     private Customer findExistingTreezCustomer(String merchantId, Card card, CustomerMatchType matchType) {
-        if (matchType == CustomerMatchType.EMAIL) {
+        if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
             String email = card.getCardholderEmail();
             if (email != null && !email.isEmpty()) {
                 Optional<Customer> byEmail = customerRepository.findByMerchantIdAndTreezEmailAndIntegrationType(
@@ -567,7 +569,9 @@ public class CustomerSyncService {
                     return byEmail.get();
                 }
             }
-        } else if (matchType == CustomerMatchType.PHONE) {
+        }
+        
+        if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
             String phone = card.getCardholderPhone();
             if (phone != null && !phone.isEmpty()) {
                 // Normalize phone from Boomerangme format (remove "1" prefix) to match Treez format
@@ -624,38 +628,296 @@ public class CustomerSyncService {
     /**
      * Create new Treez customer
      * Stores Treez customer data separately from Boomerangme card data
+     * Handles duplicate customer errors by finding and linking to existing customer
      */
     private void createNewTreezCustomer(IntegrationConfig config, Card card) {
         String cardId = card.getSerialNumber() != null ? card.getSerialNumber() : card.getCardholderId();
+        String merchantId = config.getMerchantId();
         log.info("Creating new Treez customer for card: {}", cardId);
         
-        // TODO: Call Treez API to create customer
-        // For now, create local record without Treez customer ID
-        log.warn("TODO: Implement Treez customer creation API call");
-        log.info("Customer would be created in Treez with: email={}, phone={}, name={} {}",
-                card.getCardholderEmail(), card.getCardholderPhone(), 
-                card.getCardholderFirstName(), card.getCardholderLastName());
+        // Validate required fields
+        if (card.getCardholderBirthDate() == null) {
+            log.error("Cannot create Treez customer: cardholder_birth_date is required but missing for card {}", cardId);
+            // Create local record without Treez customer ID for now
+            Customer customer = Customer.builder()
+                    .merchantId(merchantId)
+                    .integrationType(IntegrationType.TREEZ)
+                    .card(card)
+                    .treezEmail(card.getCardholderEmail())
+                    .treezPhone(card.getCardholderPhone())
+                    .treezFirstName(card.getCardholderFirstName())
+                    .treezLastName(card.getCardholderLastName())
+                    .treezBirthDate(null)
+                    .totalPoints(card.getBonusBalance() != null ? card.getBonusBalance() : 0)
+                    .syncedAt(LocalDateTime.now())
+                    .build();
+            customer = customerRepository.save(customer);
+            log.warn("Created local customer record {} without Treez customer ID (missing birth date)", customer.getId());
+            return;
+        }
         
-        // Store Treez customer data separately (from Boomerangme card data)
-        // When Treez customer is created via API, we'll get the Treez customer ID
-        Customer customer = Customer.builder()
-                .merchantId(config.getMerchantId())
-                .integrationType(IntegrationType.TREEZ)
-                .card(card)
-                .treezEmail(card.getCardholderEmail())  // Use Treez-specific fields
-                .treezPhone(card.getCardholderPhone())
-                .treezFirstName(card.getCardholderFirstName())
-                .treezLastName(card.getCardholderLastName())
-                .treezBirthDate(card.getCardholderBirthDate())
-                .totalPoints(card.getBonusBalance() != null ? card.getBonusBalance() : 0)
-                .syncedAt(LocalDateTime.now())
-                .build();
+        if (card.getCardholderFirstName() == null || card.getCardholderFirstName().isEmpty()) {
+            log.error("Cannot create Treez customer: first_name is required but missing for card {}", cardId);
+            return;
+        }
         
-        // TODO: After Treez API call:
-        // customer.setExternalCustomerId(treezCustomerId);
+        if (card.getCardholderLastName() == null || card.getCardholderLastName().isEmpty()) {
+            log.error("Cannot create Treez customer: last_name is required but missing for card {}", cardId);
+            return;
+        }
         
-        customer = customerRepository.save(customer);
-        log.info("Created local customer record {} (Treez API sync pending)", customer.getId());
+        try {
+            // Prepare customer data for Treez API
+            Map<String, Object> customerData = new HashMap<>();
+            
+            // Required fields
+            customerData.put("birthday", card.getCardholderBirthDate().format(DateTimeFormatter.ISO_LOCAL_DATE)); // yyyy-MM-dd
+            customerData.put("first_name", card.getCardholderFirstName());
+            customerData.put("last_name", card.getCardholderLastName());
+            customerData.put("patient_type", "ADULT"); // Default to ADULT
+            
+            // Optional fields
+            if (card.getCardholderEmail() != null && !card.getCardholderEmail().isEmpty()) {
+                customerData.put("email", card.getCardholderEmail());
+            }
+            
+            // Normalize phone number (remove "1" prefix, ensure 10 digits)
+            String normalizedPhone = normalizePhoneForTreez(card.getCardholderPhone());
+            if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
+                // Ensure it's exactly 10 digits
+                String digitsOnly = normalizedPhone.replaceAll("[^0-9]", "");
+                if (digitsOnly.length() == 10) {
+                    customerData.put("phone", digitsOnly);
+                } else {
+                    log.warn("Phone number {} is not 10 digits after normalization, skipping phone field", card.getCardholderPhone());
+                }
+            }
+            
+            // Set defaults
+            customerData.put("gender", "U"); // U for unspecified
+            customerData.put("banned", false);
+            customerData.put("opt_out", false);
+            customerData.put("addresses", new Object[0]); // Empty array
+            
+            // Optional: rewards balance
+            if (card.getBonusBalance() != null) {
+                customerData.put("rewards_balance", card.getBonusBalance());
+            }
+            
+            // Validate Treez credentials
+            if (config.getTreezApiKey() == null || config.getTreezApiKey().isEmpty()) {
+                throw new RuntimeException("Treez API key not configured for merchant: " + merchantId);
+            }
+            if (config.getTreezDispensaryId() == null || config.getTreezDispensaryId().isEmpty()) {
+                throw new RuntimeException("Treez dispensary ID not configured for merchant: " + merchantId);
+            }
+            
+            log.info("Calling Treez API to create customer: email={}, phone={}, name={} {}",
+                    card.getCardholderEmail(), normalizedPhone, 
+                    card.getCardholderFirstName(), card.getCardholderLastName());
+            
+            // Call Treez API to create customer
+            JsonNode response = treezApiClient.createCustomer(config, customerData).block();
+            
+            if (response == null) {
+                throw new RuntimeException("Null response from Treez API");
+            }
+            
+            // Extract Treez customer ID from response
+            // Response structure needs to be verified - trying common patterns
+            String treezCustomerId = null;
+            if (response.has("customer_id")) {
+                treezCustomerId = response.get("customer_id").asText();
+            } else if (response.has("id")) {
+                treezCustomerId = response.get("id").asText();
+            } else if (response.has("data") && response.get("data").has("customer_id")) {
+                treezCustomerId = response.get("data").get("customer_id").asText();
+            } else if (response.has("data") && response.get("data").has("id")) {
+                treezCustomerId = response.get("data").get("id").asText();
+            }
+            
+            if (treezCustomerId == null || treezCustomerId.isEmpty()) {
+                log.warn("Treez API response does not contain customer_id field. Response: {}", response.toString());
+                // Still create local record, but log warning
+            }
+            
+            // Create customer entity with Treez customer ID
+            Customer customer = Customer.builder()
+                    .merchantId(merchantId)
+                    .integrationType(IntegrationType.TREEZ)
+                    .externalCustomerId(treezCustomerId)
+                    .card(card)
+                    .treezEmail(card.getCardholderEmail())
+                    .treezPhone(normalizedPhone != null ? normalizedPhone : card.getCardholderPhone())
+                    .treezFirstName(card.getCardholderFirstName())
+                    .treezLastName(card.getCardholderLastName())
+                    .treezBirthDate(card.getCardholderBirthDate())
+                    .totalPoints(card.getBonusBalance() != null ? card.getBonusBalance() : 0)
+                    .syncedAt(LocalDateTime.now())
+                    .build();
+            
+            customer = customerRepository.save(customer);
+            log.info("Successfully created Treez customer {} and linked to card {}", treezCustomerId, cardId);
+            
+        } catch (ApiException e) {
+            // Handle duplicate customer errors (400)
+            if (e.getStatusCode() == 400) {
+                String errorBody = e.getResponseBody() != null ? e.getResponseBody().toLowerCase() : "";
+                boolean isDuplicate = errorBody.contains("duplicate") || 
+                                     errorBody.contains("already exists") ||
+                                     errorBody.contains("validation_error");
+                
+                if (isDuplicate) {
+                    log.info("Treez customer creation failed due to duplicate (phone/email). Searching for existing customer...");
+                    
+                    // Try to find existing customer by phone or email
+                    String normalizedPhone = normalizePhoneForTreez(card.getCardholderPhone());
+                    
+                    JsonNode existingCustomer = null;
+                    String treezCustomerId = null;
+                    
+                    // Try phone first if available
+                    if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
+                        String digitsOnly = normalizedPhone.replaceAll("[^0-9]", "");
+                        if (digitsOnly.length() == 10) {
+                            try {
+                                existingCustomer = treezApiClient.findCustomerByPhone(config, digitsOnly).block();
+                                if (existingCustomer != null) {
+                                    // Extract customer ID from response
+                                    if (existingCustomer.has("customer_id")) {
+                                        treezCustomerId = existingCustomer.get("customer_id").asText();
+                                    } else if (existingCustomer.has("id")) {
+                                        treezCustomerId = existingCustomer.get("id").asText();
+                                    } else if (existingCustomer.has("data") && existingCustomer.get("data").has("customer_id")) {
+                                        treezCustomerId = existingCustomer.get("data").get("customer_id").asText();
+                                    } else if (existingCustomer.has("data") && existingCustomer.get("data").has("id")) {
+                                        treezCustomerId = existingCustomer.get("data").get("id").asText();
+                                    }
+                                    log.info("Found existing Treez customer {} by phone", treezCustomerId);
+                                }
+                            } catch (Exception phoneSearchError) {
+                                log.debug("Could not find customer by phone: {}", phoneSearchError.getMessage());
+                            }
+                        }
+                    }
+                    
+                    // Try email if phone search didn't find customer
+                    if (treezCustomerId == null && card.getCardholderEmail() != null && !card.getCardholderEmail().isEmpty()) {
+                        try {
+                            existingCustomer = treezApiClient.findCustomerByEmail(config, card.getCardholderEmail()).block();
+                            if (existingCustomer != null) {
+                                // Extract customer ID from response
+                                if (existingCustomer.has("customer_id")) {
+                                    treezCustomerId = existingCustomer.get("customer_id").asText();
+                                } else if (existingCustomer.has("id")) {
+                                    treezCustomerId = existingCustomer.get("id").asText();
+                                } else if (existingCustomer.has("data") && existingCustomer.get("data").has("customer_id")) {
+                                    treezCustomerId = existingCustomer.get("data").get("customer_id").asText();
+                                } else if (existingCustomer.has("data") && existingCustomer.get("data").has("id")) {
+                                    treezCustomerId = existingCustomer.get("data").get("id").asText();
+                                }
+                                log.info("Found existing Treez customer {} by email", treezCustomerId);
+                            }
+                        } catch (Exception emailSearchError) {
+                            log.debug("Could not find customer by email: {}", emailSearchError.getMessage());
+                        }
+                    }
+                    
+                    // Link card to existing customer if found
+                    if (treezCustomerId != null && !treezCustomerId.isEmpty()) {
+                        Customer customer = Customer.builder()
+                                .merchantId(merchantId)
+                                .integrationType(IntegrationType.TREEZ)
+                                .externalCustomerId(treezCustomerId)
+                                .card(card)
+                                .treezEmail(card.getCardholderEmail())
+                                .treezPhone(normalizedPhone != null ? normalizedPhone : card.getCardholderPhone())
+                                .treezFirstName(card.getCardholderFirstName())
+                                .treezLastName(card.getCardholderLastName())
+                                .treezBirthDate(card.getCardholderBirthDate())
+                                .totalPoints(card.getBonusBalance() != null ? card.getBonusBalance() : 0)
+                                .syncedAt(LocalDateTime.now())
+                                .build();
+                        
+                        customer = customerRepository.save(customer);
+                        log.info("Linked card {} to existing Treez customer {}", cardId, treezCustomerId);
+                        return;
+                    } else {
+                        log.warn("Duplicate error from Treez but could not find existing customer by phone/email. Creating local record without Treez ID.");
+                    }
+                }
+            }
+            
+            // For other errors or if duplicate handling failed, log and create local record
+            log.error("Error creating Treez customer: {} - {}", e.getStatusCode(), e.getResponseBody());
+            
+            // Create local record without Treez customer ID
+            String normalizedPhone = normalizePhoneForTreez(card.getCardholderPhone());
+            Customer customer = Customer.builder()
+                    .merchantId(merchantId)
+                    .integrationType(IntegrationType.TREEZ)
+                    .card(card)
+                    .treezEmail(card.getCardholderEmail())
+                    .treezPhone(normalizedPhone != null ? normalizedPhone : card.getCardholderPhone())
+                    .treezFirstName(card.getCardholderFirstName())
+                    .treezLastName(card.getCardholderLastName())
+                    .treezBirthDate(card.getCardholderBirthDate())
+                    .totalPoints(card.getBonusBalance() != null ? card.getBonusBalance() : 0)
+                    .syncedAt(LocalDateTime.now())
+                    .build();
+            
+            customer = customerRepository.save(customer);
+            log.warn("Created local customer record {} without Treez customer ID (API error)", customer.getId());
+            
+        } catch (Exception e) {
+            log.error("Unexpected error creating Treez customer for card {}: {}", cardId, e.getMessage(), e);
+            
+            // Create local record without Treez customer ID
+            String normalizedPhone = normalizePhoneForTreez(card.getCardholderPhone());
+            Customer customer = Customer.builder()
+                    .merchantId(merchantId)
+                    .integrationType(IntegrationType.TREEZ)
+                    .card(card)
+                    .treezEmail(card.getCardholderEmail())
+                    .treezPhone(normalizedPhone != null ? normalizedPhone : card.getCardholderPhone())
+                    .treezFirstName(card.getCardholderFirstName())
+                    .treezLastName(card.getCardholderLastName())
+                    .treezBirthDate(card.getCardholderBirthDate())
+                    .totalPoints(card.getBonusBalance() != null ? card.getBonusBalance() : 0)
+                    .syncedAt(LocalDateTime.now())
+                    .build();
+            
+            customer = customerRepository.save(customer);
+            log.warn("Created local customer record {} without Treez customer ID (unexpected error)", customer.getId());
+        }
+    }
+    
+    /**
+     * Normalize phone number for Treez API (10 digits, no "1" prefix)
+     * Treez requires 10-digit phone numbers
+     */
+    private String normalizePhoneForTreez(String phone) {
+        if (phone == null || phone.isEmpty()) {
+            return phone;
+        }
+        
+        // Remove any non-digit characters
+        String digitsOnly = phone.replaceAll("[^0-9]", "");
+        
+        // If phone starts with "1" and has 11 digits, remove the "1" prefix
+        if (digitsOnly.startsWith("1") && digitsOnly.length() == 11) {
+            String normalized = digitsOnly.substring(1);
+            log.debug("Normalized phone {} to {} for Treez API", phone, normalized);
+            return normalized;
+        }
+        
+        // If already 10 digits, return as is
+        if (digitsOnly.length() == 10) {
+            return digitsOnly;
+        }
+        
+        // Return original if doesn't match expected format (will be logged as warning)
+        return phone;
     }
 
     /**

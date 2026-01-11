@@ -715,7 +715,14 @@ public class TreezWebhookService {
                 
                 if (customerResponse != null) {
                     // Extract customer ID from response
-                    String boomerangmeCustomerId = customerResponse.has("id") ? customerResponse.get("id").asText() : null;
+                    // Boomerangme API wraps response in a "data" field: { "code": 201, "data": { "id": "...", ... } }
+                    String boomerangmeCustomerId = null;
+                    if (customerResponse.has("data") && customerResponse.get("data").has("id")) {
+                        boomerangmeCustomerId = customerResponse.get("data").get("id").asText();
+                    } else if (customerResponse.has("id")) {
+                        // Fallback: check root level (for backwards compatibility)
+                        boomerangmeCustomerId = customerResponse.get("id").asText();
+                    }
                     
                     if (boomerangmeCustomerId != null) {
                         log.info("Successfully created Boomerangme customer: {} (Treez ID: {})", boomerangmeCustomerId, treezCustomerId);
@@ -751,7 +758,9 @@ public class TreezWebhookService {
                         log.info("NOTE: Customer must manually install card via link/QR code. Card will be linked when installed.");
                         
                     } else {
-                        throw new RuntimeException("Customer creation response missing id field");
+                        // Log the actual response structure for debugging
+                        log.error("Customer creation response missing id field. Response structure: {}", customerResponse.toPrettyString());
+                        throw new RuntimeException("Customer creation response missing id field. Expected structure: { \"data\": { \"id\": \"...\" } }");
                     }
                 } else {
                     throw new RuntimeException("Null response from Boomerangme API");
@@ -820,75 +829,108 @@ public class TreezWebhookService {
     private Card findBoomerangmeCardByEmailOrPhone(IntegrationConfig config, String email, String phone) {
         CustomerMatchType matchType = config.getCustomerMatchType() != null 
                 ? config.getCustomerMatchType() 
-                : CustomerMatchType.EMAIL; // Default to EMAIL
+                : CustomerMatchType.BOTH; // Default to BOTH
         
         log.info("Searching for Boomerangme card using match type: {} (email={}, phone={})", matchType, email, phone);
         
-        // Determine which value to use for matching based on match type
-        String matchValue = null;
         String normalizedPhone = null;
-        
-        if (matchType == CustomerMatchType.EMAIL) {
-            matchValue = email;
-        } else if (matchType == CustomerMatchType.PHONE) {
-            // Normalize phone for Boomerangme (add "1" prefix if needed)
+        if (phone != null && !phone.isEmpty()) {
             normalizedPhone = normalizePhoneForBoomerangme(phone);
-            matchValue = normalizedPhone;
-        }
-        
-        if (matchValue == null || matchValue.isEmpty()) {
-            log.warn("Match value is null or empty for match type: {}", matchType);
-            return null;
         }
         
         // Step 1: Check local database first
-        if (matchType == CustomerMatchType.EMAIL) {
-            Optional<Card> cardByEmail = cardRepository.findByCardholderEmail(matchValue);
-            if (cardByEmail.isPresent()) {
-                log.info("Found existing Boomerangme card in local DB by email: {}", matchValue);
-                return cardByEmail.get();
+        // Try email first (for EMAIL or BOTH)
+        if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
+            if (email != null && !email.isEmpty()) {
+                Optional<Card> cardByEmail = cardRepository.findByCardholderEmail(email);
+                if (cardByEmail.isPresent()) {
+                    log.info("Found existing Boomerangme card in local DB by email: {}", email);
+                    return cardByEmail.get();
+                }
             }
-        } else if (matchType == CustomerMatchType.PHONE) {
-            // Try normalized phone first (with "1" prefix)
-            Optional<Card> cardByPhone = cardRepository.findByCardholderPhone(matchValue);
-            if (cardByPhone.isPresent()) {
-                log.info("Found existing Boomerangme card in local DB by phone: {}", matchValue);
-                return cardByPhone.get();
-            }
-            
-            // Also try original phone (without prefix) in case card was saved differently
-            if (phone != null && !phone.equals(matchValue)) {
-                Optional<Card> cardByOriginalPhone = cardRepository.findByCardholderPhone(phone);
-                if (cardByOriginalPhone.isPresent()) {
-                    log.info("Found existing Boomerangme card in local DB by original phone: {}", phone);
-                    return cardByOriginalPhone.get();
+        }
+        
+        // Try phone (for PHONE or BOTH if email didn't match)
+        if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
+            if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
+                // Try normalized phone first (with "1" prefix)
+                Optional<Card> cardByPhone = cardRepository.findByCardholderPhone(normalizedPhone);
+                if (cardByPhone.isPresent()) {
+                    log.info("Found existing Boomerangme card in local DB by phone: {}", normalizedPhone);
+                    return cardByPhone.get();
+                }
+                
+                // Also try original phone (without prefix) in case card was saved differently
+                if (phone != null && !phone.equals(normalizedPhone)) {
+                    Optional<Card> cardByOriginalPhone = cardRepository.findByCardholderPhone(phone);
+                    if (cardByOriginalPhone.isPresent()) {
+                        log.info("Found existing Boomerangme card in local DB by original phone: {}", phone);
+                        return cardByOriginalPhone.get();
+                    }
                 }
             }
         }
         
         // Step 2: Not found locally - fetch from Boomerangme API
-        log.info("Card not found in local DB, fetching from Boomerangme API using match type: {} with value: {}", matchType, matchValue);
+        log.info("Card not found in local DB, fetching from Boomerangme API using match type: {}", matchType);
         
         try {
             JsonNode cardsResponse = null;
             
-            if (matchType == CustomerMatchType.EMAIL) {
-                cardsResponse = boomerangmeApiClient.searchCardsByEmail(
-                        config.getBoomerangmeApiKey(), matchValue
-                ).block();
-            } else if (matchType == CustomerMatchType.PHONE) {
-                // Use normalized phone (with "1" prefix) for API call
-                cardsResponse = boomerangmeApiClient.searchCardsByPhone(
-                        config.getBoomerangmeApiKey(), matchValue
-                ).block();
+            // Try email first (for EMAIL or BOTH)
+            if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
+                if (email != null && !email.isEmpty()) {
+                    log.debug("Searching Boomerangme API by email: {}", email);
+                    cardsResponse = boomerangmeApiClient.searchCardsByEmail(
+                            config.getBoomerangmeApiKey(), email
+                    ).block();
+                    
+                    // If found, process and return
+                    if (cardsResponse != null && cardsResponse.has("data") && 
+                        cardsResponse.get("data").isArray() && cardsResponse.get("data").size() > 0) {
+                        log.info("Found card in Boomerangme API by email");
+                        return processBoomerangmeCardResponse(config.getMerchantId(), cardsResponse);
+                    }
+                }
             }
             
+            // Try phone if email didn't find anything (for PHONE or BOTH)
+            if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
+                if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
+                    log.debug("Searching Boomerangme API by phone: {}", normalizedPhone);
+                    cardsResponse = boomerangmeApiClient.searchCardsByPhone(
+                            config.getBoomerangmeApiKey(), normalizedPhone
+                    ).block();
+                    
+                    // If found, process and return
+                    if (cardsResponse != null && cardsResponse.has("data") && 
+                        cardsResponse.get("data").isArray() && cardsResponse.get("data").size() > 0) {
+                        log.info("Found card in Boomerangme API by phone");
+                        return processBoomerangmeCardResponse(config.getMerchantId(), cardsResponse);
+                    }
+                }
+            }
+            
+            log.info("Card not found in Boomerangme API by either email or phone");
+            return null;
+        } catch (Exception e) {
+            log.error("Error fetching cards from Boomerangme API: {}", e.getMessage(), e);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Process Boomerangme card response and save the first card found
+     */
+    private Card processBoomerangmeCardResponse(String merchantId, JsonNode cardsResponse) {
+        try {
             if (cardsResponse != null && cardsResponse.has("data") && cardsResponse.get("data").isArray()) {
                 // Process cards from API response
                 Iterator<JsonNode> cardsIterator = cardsResponse.get("data").elements();
                 while (cardsIterator.hasNext()) {
                     JsonNode cardData = cardsIterator.next();
-                    Card savedCard = saveCardFromBoomerangmeResponse(config.getMerchantId(), cardData);
+                    Card savedCard = saveCardFromBoomerangmeResponse(merchantId, cardData);
                     if (savedCard != null) {
                         String cardId = savedCard.getSerialNumber() != null 
                                 ? savedCard.getSerialNumber() 
@@ -902,7 +944,7 @@ public class TreezWebhookService {
                 Iterator<JsonNode> cardsIterator = cardsResponse.elements();
                 while (cardsIterator.hasNext()) {
                     JsonNode cardData = cardsIterator.next();
-                    Card savedCard = saveCardFromBoomerangmeResponse(config.getMerchantId(), cardData);
+                    Card savedCard = saveCardFromBoomerangmeResponse(merchantId, cardData);
                     if (savedCard != null) {
                         String cardId = savedCard.getSerialNumber() != null 
                                 ? savedCard.getSerialNumber() 
@@ -912,12 +954,9 @@ public class TreezWebhookService {
                     }
                 }
             }
-            
-            log.debug("No cards found in Boomerangme API response for match type: {} with value: {}", matchType, matchValue);
         } catch (Exception e) {
-            log.error("Error fetching cards from Boomerangme API: {}", e.getMessage(), e);
+            log.error("Error processing Boomerangme card response: {}", e.getMessage(), e);
         }
-        
         return null;
     }
 
@@ -928,7 +967,7 @@ public class TreezWebhookService {
     private Card fetchBoomerangmeCardForCustomer(IntegrationConfig config, Customer customer) {
         CustomerMatchType matchType = config.getCustomerMatchType() != null 
                 ? config.getCustomerMatchType() 
-                : CustomerMatchType.EMAIL; // Default to EMAIL
+                : CustomerMatchType.BOTH; // Default to BOTH
         
         log.info("Fetching Boomerangme card for customer {} using match type: {}", customer.getId(), matchType);
         

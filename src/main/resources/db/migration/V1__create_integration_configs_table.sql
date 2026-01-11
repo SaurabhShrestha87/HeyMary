@@ -27,7 +27,7 @@ COMMENT ON COLUMN integration_configs.boomerangme_webhook_secret IS 'Webhook sec
 COMMENT ON COLUMN integration_configs.treez_webhook_secret IS 'Bearer token for Treez webhook authentication';
 COMMENT ON COLUMN integration_configs.integration_type IS 'POS integration type for this merchant: TREEZ or DUTCHIE';
 COMMENT ON COLUMN integration_configs.default_template_id IS 'Default template ID to use when creating cards for this integration. If not set, the system will use the template ID from the request or a system default.';
-COMMENT ON COLUMN integration_configs.customer_match_type IS 'Field used to match Treez customers with Boomerangme cards: PHONE or EMAIL';
+COMMENT ON COLUMN integration_configs.customer_match_type IS 'Field used to match Treez customers with Boomerangme cards: PHONE, EMAIL, or BOTH (default: BOTH)';
 
 -- Create cards table
 CREATE TABLE cards (

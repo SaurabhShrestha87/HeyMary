@@ -56,9 +56,13 @@ public class IntegrationConfig {
 
     // Treez-specific configuration
     @Column(name = "treez_api_key", length = 500)
-    private String treezApiKey;
+    private String treezApiKey;  // API key for token generation
+
+    @Column(name = "treez_client_id", length = 500)
+    private String treezClientId;  // Client ID for API requests
 
     @Column(name = "treez_auth_header", length = 500)
+    @Deprecated  // No longer used - tokens are fetched dynamically
     private String treezAuthHeader;
 
     @Column(name = "treez_dispensary_id", length = 100)
@@ -66,11 +70,18 @@ public class IntegrationConfig {
 
     @Column(name = "treez_webhook_secret", length = 500)
     private String treezWebhookSecret;  // Bearer token for webhook authentication
+    
+    // Treez token management (transient - not stored in DB)
+    @Transient
+    private String treezAccessToken;  // Current access token
+    
+    @Transient
+    private LocalDateTime treezTokenExpiresAt;  // Token expiration time
 
     @Enumerated(EnumType.STRING)
     @Column(name = "customer_match_type", length = 20)
     @Builder.Default
-    private CustomerMatchType customerMatchType = CustomerMatchType.EMAIL; // Default to EMAIL for backward compatibility
+    private CustomerMatchType customerMatchType = CustomerMatchType.BOTH; // Default to BOTH for best matching accuracy
 
     @Column(name = "enabled", nullable = false)
     @Builder.Default

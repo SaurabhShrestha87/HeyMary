@@ -19,6 +19,9 @@ public class WebClientConfig {
     @Value("${dutchie.api.timeout:30000}")
     private int dutchieTimeout;
 
+    @Value("${treez.api.timeout:30000}")
+    private int treezTimeout;
+
     @Bean
     public WebClient.Builder webClientBuilder() {
         ConnectionProvider connectionProvider = ConnectionProvider.builder("webclient-pool")
@@ -46,6 +49,15 @@ public class WebClientConfig {
     @Bean(name = "dutchieWebClient")
     public WebClient dutchieWebClient(WebClient.Builder webClientBuilder,
                                      @Value("${dutchie.api.base-url}") String baseUrl) {
+        return webClientBuilder
+                .baseUrl(baseUrl)
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                .build();
+    }
+
+    @Bean(name = "treezWebClient")
+    public WebClient treezWebClient(WebClient.Builder webClientBuilder,
+                                   @Value("${treez.api.base-url}") String baseUrl) {
         return webClientBuilder
                 .baseUrl(baseUrl)
                 .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))

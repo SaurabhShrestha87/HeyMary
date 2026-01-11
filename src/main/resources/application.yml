@@ -48,6 +48,13 @@ dutchie:
   webhook:
     secret: ${DUTCHIE_WEBHOOK_SECRET:}
 
+# Treez POS API Configuration
+treez:
+  api:
+    base-url: ${TREEZ_API_URL:https://api.treez.io}
+    timeout: 30000
+    client-id: ${TREEZ_CLIENT_ID:}  # Optional - may use API key if same
+
 # Application Configuration
 app:
   admin:

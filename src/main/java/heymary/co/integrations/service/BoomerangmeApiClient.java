@@ -103,7 +103,13 @@ public class BoomerangmeApiClient {
                             log.warn("Retrying customer creation, attempt: {}", retrySignal.totalRetries() + 1))
                 )
                 .doOnSuccess(response -> {
-                    String customerId = response.has("id") ? response.get("id").asText() : "unknown";
+                    // Boomerangme API wraps response in a "data" field
+                    String customerId = "unknown";
+                    if (response.has("data") && response.get("data").has("id")) {
+                        customerId = response.get("data").get("id").asText();
+                    } else if (response.has("id")) {
+                        customerId = response.get("id").asText();
+                    }
                     log.info("Successfully created Boomerangme customer: {}", customerId);
                 })
                 .doOnError(error -> log.error("Error creating customer for {}: {}", email, error.getMessage()));
@@ -389,6 +395,55 @@ public class BoomerangmeApiClient {
                 )
                 .doOnSuccess(response -> log.debug("Successfully updated card {}", cardId))
                 .doOnError(error -> log.error("Error updating card {}: {}", cardId, error.getMessage()));
+    }
+
+    /**
+     * Get all cards with pagination support
+     * GET /api/v2/cards?page={page}&itemsPerPage={itemsPerPage}
+     * 
+     * @param apiKey Boomerangme API key
+     * @param page Page number (starts at 1)
+     * @param itemsPerPage Number of items per page (default 50, max 100)
+     * @return JsonNode with paginated card data
+     */
+    public Mono<JsonNode> getCards(String apiKey, int page, int itemsPerPage) {
+        log.debug("Fetching cards page {} with {} items per page", page, itemsPerPage);
+        
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/api/v2/cards")
+                        .queryParam("page", page)
+                        .queryParam("itemsPerPage", itemsPerPage)
+                        .build())
+                .header("X-API-Key", apiKey)
+                .retrieve()
+                .onStatus(status -> status.isError(), response -> {
+                    return response.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                log.error("Boomerangme API error fetching cards: {} - {}", response.statusCode(), body);
+                                return Mono.error(new ApiException(
+                                    "Failed to fetch cards: " + response.statusCode(),
+                                    response.statusCode().value(),
+                                    body
+                                ));
+                            });
+                })
+                .bodyToMono(JsonNode.class)
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof ApiException apiEx && 
+                                (apiEx.getStatusCode() >= 500 || apiEx.getStatusCode() == 0))
+                        .doBeforeRetry(retrySignal -> 
+                            log.warn("Retrying fetch cards, attempt: {}", retrySignal.totalRetries() + 1))
+                )
+                .doOnSuccess(response -> {
+                    if (response.has("data") && response.get("data").isArray()) {
+                        int count = response.get("data").size();
+                        log.debug("Successfully fetched {} cards from page {}", count, page);
+                    } else {
+                        log.debug("Successfully fetched cards from page {}", page);
+                    }
+                })
+                .doOnError(error -> log.error("Error fetching cards page {}: {}", page, error.getMessage()));
     }
 }
 
