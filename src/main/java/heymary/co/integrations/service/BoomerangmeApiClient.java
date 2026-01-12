@@ -16,10 +16,73 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Boomerangme API client
+ * 
+ * @author Shresthasaurabh86@gmail.com
+ * @version 1.0
+ * @since 2026-01-13
+ */
+
 @Slf4j
 @Service
 public class BoomerangmeApiClient {
 
+/**
+    Stamp - ID 0
+    Cashback - ID 1
+    Multipass - ID 2 
+    Coupon - ID 3
+    Discount - ID 4
+    Gift - ID 5
+    Membership - ID 6
+    Reward - ID 7 (We use this for the loyalty program)
+
+    Add amount to card
+    Applicable to Cashback card (card ID 1)
+
+    Add point to card
+    Applies to Discount, Cashback, Certificate cards (card IDs 4, 1, 5)
+
+    Add reward to card
+    Applicable to Stamp card (card ID 0)
+
+    Add scores to card
+    Applies to Reward cards with the mechanics type “Points”, Multipass (card ID 7, 2)
+
+    Add stamp to card
+    Applies to Stamp card (card ID 0)
+
+    Add visit to card
+    Applies to Multipass card (card ID 2), membership card WITHOUT LIMITS (card ID 6), stamp card (card ID 0) with visit mechanics, rewards card (card ID 7) with visit mechanics.
+
+    Add purchase to card (add amount to card)
+    Applies to stamp card (card ID 0) with spend mechanics, reward card (card ID 7) with spend mechanics.
+
+    Receive reward (receive reward by client)
+    Applicable to Reward card (card ID 7)
+
+    Redeem coupon
+    Applies to Coupon card (card ID 3)
+
+    Subtract amount from card
+    Applies to Cashback card (card ID 1)
+
+    Subtract point from card
+    Applies to Discount, Cashback, Certificate cards (card IDs 4, 1, 5) 
+
+    Subtract reward from card
+    Applicable to Stamp card (card ID 0)
+
+    Subtract scores from card (Subtract points from card)
+    Applies to Reward cards, Multipass cards (card IDs 7, 2)
+
+    Subtract stamp from card
+    Applies to Stamp card (card ID 0)
+
+    Subtract visit to card (add visits to card)
+    Applies to Multipass card (card ID 2),  Membership card WITH LIMITS (card ID 6)
+*/
     private final WebClient webClient;
 
     public BoomerangmeApiClient(@Qualifier("boomerangmeWebClient") WebClient webClient) {
@@ -320,24 +383,26 @@ public class BoomerangmeApiClient {
 
     /**
      * Subtract scores (points) from card - For redemptions or reversals
-     * POST /api/v2/cards/{cardId}/points/subtract
+     * POST /api/v2/cards/{serialNumber}/subtract-scores
+     * 
+     * Applies to Reward cards (card ID 7) with Points mechanics
      * 
      * @param apiKey Boomerangme API key
-     * @param cardId Card ID (serial number)
-     * @param scores Points to subtract
+     * @param serialNumber Card serial number
+     * @param scores Points to subtract (positive number)
      * @param comment Optional comment/reason for subtracting points
      * @return JsonNode with updated card details
      */
-    public Mono<JsonNode> subtractScoresFromCard(String apiKey, String cardId, Integer scores, String comment) {
-        log.info("Subtracting {} scores from card {} with comment: {}", scores, cardId, comment);
+    public Mono<JsonNode> subtractScoresFromCard(String apiKey, String serialNumber, Integer scores, String comment) {
+        log.info("Subtracting {} scores from card {} with comment: {}", scores, serialNumber, comment);
         
         Map<String, Object> requestBody = Map.of(
-            "points", scores,
+            "scores", scores,
             "comment", comment != null ? comment : "Points redemption"
         );
 
         return webClient.post()
-                .uri("/api/v2/cards/{cardId}/points/subtract", cardId)
+                .uri("/api/v2/cards/{serialNumber}/subtract-scores", serialNumber)  // Fixed endpoint
                 .header("X-API-Key", apiKey)
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .bodyValue(requestBody)
@@ -360,8 +425,8 @@ public class BoomerangmeApiClient {
                         .doBeforeRetry(retrySignal -> 
                             log.warn("Retrying subtract scores, attempt: {}", retrySignal.totalRetries() + 1))
                 )
-                .doOnSuccess(response -> log.info("Successfully subtracted {} scores from card {}", scores, cardId))
-                .doOnError(error -> log.error("Error subtracting scores from card {}: {}", cardId, error.getMessage()));
+                .doOnSuccess(response -> log.info("Successfully subtracted {} scores from card {}", scores, serialNumber))
+                .doOnError(error -> log.error("Error subtracting scores from card {}: {}", serialNumber, error.getMessage()));
     }
 
     /**

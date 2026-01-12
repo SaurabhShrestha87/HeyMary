@@ -258,14 +258,31 @@ public class TreezWebhookService {
             // Parse order date
             LocalDateTime orderDate = extractOrderDate(data);
             
-            // Calculate points (1 point per dollar, rounded down)
-            int pointsEarned = calculatePoints(orderTotal);
-            if (pointsEarned <= 0) {
-                log.info("Order {} has no points to earn, skipping sync", ticketId);
-                createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
-                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
-                        "{\"status\":\"skipped\",\"message\":\"No points to earn\"}");
-                return;
+            // Check if this is a HEYMARYREDEEM redemption order
+            int heymaryredeemDiscountPoints = extractHeyMaryRedeemDiscountPoints(data);
+            boolean isRedemptionOrder = heymaryredeemDiscountPoints > 0;
+            
+            int pointsToSync; // Can be positive (earn) or negative (redeem)
+            String pointsAction; // "earned" or "redeemed"
+            
+            if (isRedemptionOrder) {
+                // Redemption order: subtract points (don't earn any)
+                pointsToSync = -heymaryredeemDiscountPoints; // Negative value
+                pointsAction = "redeemed";
+                log.info("Order {} is a HEYMARYREDEEM redemption order - deducting {} points", 
+                         ticketId, heymaryredeemDiscountPoints);
+            } else {
+                // Normal order: earn points
+                pointsToSync = calculatePoints(orderTotal);
+                pointsAction = "earned";
+                
+                if (pointsToSync <= 0) {
+                    log.info("Order {} has no points to earn, skipping sync", ticketId);
+                    createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                            SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                            "{\"status\":\"skipped\",\"message\":\"No points to earn\"}");
+                    return;
+                }
             }
             
             // Find customer
@@ -317,13 +334,13 @@ public class TreezWebhookService {
                     .externalOrderId(ticketId)
                     .orderTotal(orderTotal)
                     .orderDate(orderDate)
-                    .pointsEarned(pointsEarned)
+                    .pointsEarned(pointsToSync)  // Can be positive (earned) or negative (redeemed)
                     .pointsSynced(false)
                     .build());
             
             order.setCustomer(customer);
             order = orderRepository.save(order);
-            log.info("Saved order {} to database with {} points", ticketId, pointsEarned);
+            log.info("Saved order {} to database with {} points ({})", ticketId, Math.abs(pointsToSync), pointsAction);
             
             // Sync points to Boomerangme (send transaction first)
             // Use serialNumber if available, otherwise use cardholderId
@@ -331,24 +348,46 @@ public class TreezWebhookService {
                     ? customer.getCard().getSerialNumber() 
                     : customer.getCard().getCardholderId();
             
-            // Create a beautiful, customer-friendly reason message
-            String reason = buildPointsReasonMessage(ticketId, orderTotal, pointsEarned, orderDate);
-            log.info("Sending {} points to Boomerangme card {} for order {}", pointsEarned, cardIdForApi, ticketId);
+            JsonNode boomerangmeResponse;
             
-            JsonNode boomerangmeResponse = boomerangmeApiClient.addScoresToCard(
-                    config.getBoomerangmeApiKey(),
-                    cardIdForApi,
-                    pointsEarned,
-                    reason,
-                    orderTotal
-            ).block(); // Block since we're in async method
+            if (isRedemptionOrder) {
+                // Subtract points for redemption
+                String redemptionReason = buildRedemptionReasonMessage(ticketId, orderTotal, heymaryredeemDiscountPoints, orderDate);
+                log.info("Subtracting {} points from Boomerangme card {} for order {}", 
+                         heymaryredeemDiscountPoints, cardIdForApi, ticketId);
+                
+                boomerangmeResponse = boomerangmeApiClient.subtractScoresFromCard(
+                        config.getBoomerangmeApiKey(),
+                        cardIdForApi,
+                        heymaryredeemDiscountPoints,  // Positive number
+                        redemptionReason
+                ).block();
+            } else {
+                // Add points normally
+                String earnReason = buildPointsReasonMessage(ticketId, orderTotal, pointsToSync, orderDate);
+                log.info("Adding {} points to Boomerangme card {} for order {}", 
+                         pointsToSync, cardIdForApi, ticketId);
+                
+                boomerangmeResponse = boomerangmeApiClient.addScoresToCard(
+                        config.getBoomerangmeApiKey(),
+                        cardIdForApi,
+                        pointsToSync,
+                        earnReason,
+                        orderTotal
+                ).block();
+            }
             
             if (boomerangmeResponse == null) {
                 throw new RuntimeException("Null response from Boomerangme API");
             }
             
-            log.info("Successfully sent {} points to Boomerangme for order {}. Waiting for webhook to update balance.", 
-                    pointsEarned, ticketId);
+            if (isRedemptionOrder) {
+                log.info("Successfully redeemed {} points from Boomerangme for order {}. Waiting for webhook to update balance.", 
+                        heymaryredeemDiscountPoints, ticketId);
+            } else {
+                log.info("Successfully sent {} points to Boomerangme for order {}. Waiting for webhook to update balance.", 
+                        pointsToSync, ticketId);
+            }
             
             // Update order as synced (points sent to Boomerangme)
             // Note: We don't update customer/card points here - wait for CardBalanceUpdatedEvent webhook
@@ -357,11 +396,22 @@ public class TreezWebhookService {
             orderRepository.save(order);
             
             // Create success sync log
-            createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
-                    SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
-                    String.format("{\"points_added\": %d, \"order_total\": %.2f}", pointsEarned, orderTotal));
-            
-            log.info("Successfully synced Treez transaction {} with {} points (1:1 ratio)", ticketId, pointsEarned);
+            if (isRedemptionOrder) {
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        String.format("{\"points_redeemed\": %d, \"order_total\": %.2f, \"redemption\": true}", 
+                                heymaryredeemDiscountPoints, orderTotal));
+                
+                log.info("Successfully synced Treez redemption transaction {} - {} points redeemed", 
+                         ticketId, heymaryredeemDiscountPoints);
+            } else {
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        String.format("{\"points_earned\": %d, \"order_total\": %.2f}", pointsToSync, orderTotal));
+                
+                log.info("Successfully synced Treez transaction {} - {} points earned (1:1 ratio)", 
+                         ticketId, pointsToSync);
+            }
             
         } catch (Exception e) {
             log.error("Error processing Treez TICKET event for merchant {}: {}", 
@@ -1467,6 +1517,117 @@ public class TreezWebhookService {
         }
         
         return message.toString();
+    }
+
+    /**
+     * Build customer-friendly redemption message for Boomerangme
+     * Example: "Points redeemed! Order #12345678 - $41.00 discount applied on Jan 12, 2026"
+     */
+    private String buildRedemptionReasonMessage(String orderId, BigDecimal orderTotal, int pointsRedeemed, LocalDateTime orderDate) {
+        StringBuilder message = new StringBuilder();
+        
+        // Redemption message
+        message.append("Points redeemed! ");
+        
+        // Order details with formatting
+        String shortOrderId = orderId.length() > 8 ? orderId.substring(0, 8) : orderId;
+        message.append(String.format("Order #%s - $%.2f discount applied", shortOrderId, (double) pointsRedeemed));
+        
+        // Add formatted date if available
+        if (orderDate != null) {
+            try {
+                String formattedDate = orderDate.format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy"));
+                message.append(String.format(" on %s", formattedDate));
+            } catch (Exception e) {
+                log.debug("Could not format order date: {}", e.getMessage());
+            }
+        }
+        
+        return message.toString();
+    }
+
+    /**
+     * Extract HEYMARYREDEEM discount amount from order data
+     * Returns the absolute sum of all discounts with reason "HEYMARYREDEEM"
+     * Returns 0 if no HEYMARYREDEEM discounts found
+     * 
+     * Treez webhook structure:
+     * - data.items[] - array of order items
+     * - data.items[].discounts[] - array of discounts applied to each item
+     * - discount object may have: discount_reason, discount_amount, savings, amount
+     * 
+     * @param data Order/ticket data from Treez webhook
+     * @return Total HEYMARYREDEEM discount points (absolute value, converted to int)
+     */
+    private int extractHeyMaryRedeemDiscountPoints(JsonNode data) {
+        double totalHeyMaryRedeemDiscount = 0.0;
+        int heymaryredeemCount = 0;
+        
+        try {
+            // Check if items array exists
+            if (!data.has("items") || !data.get("items").isArray()) {
+                log.debug("No items array found in order data");
+                return 0;
+            }
+            
+            JsonNode items = data.get("items");
+            
+            // Iterate through each item
+            for (JsonNode item : items) {
+                if (!item.has("discounts") || !item.get("discounts").isArray()) {
+                    continue;
+                }
+                
+                JsonNode discounts = item.get("discounts");
+                
+                // Iterate through each discount on this item
+                for (JsonNode discount : discounts) {
+                    // Check if this is a HEYMARYREDEEM discount
+                    String discountReason = null;
+                    if (discount.has("discount_reason") && !discount.get("discount_reason").isNull()) {
+                        discountReason = discount.get("discount_reason").asText();
+                    }
+                    
+                    // If not HEYMARYREDEEM, skip this discount
+                    if (discountReason == null || !discountReason.equalsIgnoreCase("HEYMARYREDEEM")) {
+                        continue;
+                    }
+                    
+                    // This is a HEYMARYREDEEM discount - extract the amount
+                    double discountAmount = 0.0;
+                    
+                    // Try different field names (Treez may use different naming)
+                    if (discount.has("discount_amount") && !discount.get("discount_amount").isNull()) {
+                        discountAmount = discount.get("discount_amount").asDouble();
+                    } else if (discount.has("savings") && !discount.get("savings").isNull()) {
+                        discountAmount = discount.get("savings").asDouble();
+                    } else if (discount.has("amount") && !discount.get("amount").isNull()) {
+                        discountAmount = discount.get("amount").asDouble();
+                    }
+                    
+                    // Use absolute value (discount amounts may be negative in Treez)
+                    double absoluteAmount = Math.abs(discountAmount);
+                    totalHeyMaryRedeemDiscount += absoluteAmount;
+                    heymaryredeemCount++;
+                    
+                    log.debug("Found HEYMARYREDEEM discount: ${} (original value: ${})", absoluteAmount, discountAmount);
+                }
+            }
+            
+            if (heymaryredeemCount > 0) {
+                int points = calculatePoints(BigDecimal.valueOf(totalHeyMaryRedeemDiscount));
+                log.info("Extracted {} HEYMARYREDEEM discount(s) totaling ${} ({} points)", 
+                         heymaryredeemCount, totalHeyMaryRedeemDiscount, points);
+                return points;
+            } else {
+                log.debug("No HEYMARYREDEEM discounts found in order");
+                return 0;
+            }
+            
+        } catch (Exception e) {
+            log.error("Error extracting HEYMARYREDEEM discounts: {}", e.getMessage(), e);
+            return 0;
+        }
     }
 }
 

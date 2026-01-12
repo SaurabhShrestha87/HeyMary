@@ -13,6 +13,10 @@ Any POS order completed will add the loyalty points to HeyMary card automaticall
 Redeem heymary loyalty points in POS via discounts
 Manual checkup on available points in customer's wallet, then adding the valid discount
 The discount will automatically consume the points available in the card/wallet of customer.
+// Look for items array -> each item can have discounts array
+// Check each discount for discount_reason = "GOODWYLL"
+// Sum the discount_amount (use absolute value)
+// Return as integer points
 This is specifically for points based loyalty programmes. There are other types of loyalty cards as well in HM.
 
 3rd milestone -
