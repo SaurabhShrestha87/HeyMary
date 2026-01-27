@@ -24,17 +24,27 @@ public class AdminApiKeyFilter extends OncePerRequestFilter {
         
         String path = request.getRequestURI();
         
-        // Only apply to integration-configs endpoints
-        if (path.startsWith("/api/integration-configs")) {
+        // Apply to admin endpoints: integration-configs and templates
+        if (path.startsWith("/api/integration-configs") || path.startsWith("/api/templates")) {
+            // Try both header name variations (case-insensitive)
             String apiKey = request.getHeader("X-Admin-API-Key");
+            if (apiKey == null) {
+                apiKey = request.getHeader("x-admin-api-key"); // lowercase variant
+            }
+            
+            log.debug("Admin endpoint access attempt: path={}, apiKey={}, expected={}", 
+                    path, apiKey != null ? "***" : "null", adminApiKey != null ? "***" : "null");
             
             if (apiKey == null || !apiKey.equals(adminApiKey)) {
-                log.warn("Unauthorized access attempt to admin endpoint: {} from IP: {}", path, request.getRemoteAddr());
+                log.warn("Unauthorized access attempt to admin endpoint: {} from IP: {}. Header value: {}", 
+                        path, request.getRemoteAddr(), apiKey != null ? "provided but invalid" : "missing");
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json");
                 response.getWriter().write("{\"error\":\"Forbidden\",\"message\":\"Valid X-Admin-API-Key header required\"}");
                 return;
             }
+            
+            log.debug("Admin API key validated successfully for path: {}", path);
         }
         
         filterChain.doFilter(request, response);

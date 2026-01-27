@@ -51,8 +51,17 @@ public class IntegrationConfig {
     @Column(name = "boomerangme_program_id")
     private String boomerangmeProgramId;
 
-    @Column(name = "default_template_id", length = 100)
+    @Column(name = "default_template_id", nullable = false, unique = true)
     private Integer defaultTemplateId;
+
+    // One-to-One relationship with Template
+    // Each integration config has exactly one unique template
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_template_id", referencedColumnName = "template_id", insertable = false, updatable = false)
+    private Template defaultTemplate;
+
+    @Column(name = "reward_program_points_per_dollar", precision = 10, scale = 2)
+    private java.math.BigDecimal rewardProgramPointsPerDollar; // Points per dollar spent (e.g., 10.00 = 10 points per $1)
 
     // Treez-specific configuration
     @Column(name = "treez_api_key", length = 500)
@@ -81,7 +90,7 @@ public class IntegrationConfig {
     @Enumerated(EnumType.STRING)
     @Column(name = "customer_match_type", length = 20)
     @Builder.Default
-    private CustomerMatchType customerMatchType = CustomerMatchType.BOTH; // Default to BOTH for best matching accuracy
+    private CustomerMatchType customerMatchType = CustomerMatchType.PHONE; // Default to PHONE for customer matching
 
     @Column(name = "enabled", nullable = false)
     @Builder.Default

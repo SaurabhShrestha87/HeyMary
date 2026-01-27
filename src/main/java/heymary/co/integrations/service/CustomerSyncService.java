@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import heymary.co.integrations.exception.ApiException;
 import heymary.co.integrations.model.Card;
 import heymary.co.integrations.model.Customer;
-import heymary.co.integrations.model.CustomerMatchType;
 import heymary.co.integrations.model.IntegrationConfig;
 import heymary.co.integrations.model.IntegrationType;
 import heymary.co.integrations.model.SyncLog;
@@ -501,20 +500,15 @@ public class CustomerSyncService {
     /**
      * Sync customer to Treez POS
      * Flow: Boomerangme card installed → Link to or create Treez customer
-     * Matches based on customer_match_type configuration (PHONE or EMAIL)
+     * Matches based on phone number
      */
     private void syncCustomerToTreez(IntegrationConfig config, Card card) {
         String merchantId = config.getMerchantId();
         String cardId = card.getSerialNumber() != null ? card.getSerialNumber() : card.getCardholderId();
         log.info("Syncing customer to Treez for card: {}", cardId);
         
-        // Get match type from config
-        CustomerMatchType matchType = config.getCustomerMatchType() != null 
-                ? config.getCustomerMatchType() 
-                : CustomerMatchType.BOTH; // Default to BOTH
-        
-        // Step 1: Check if customer already exists by match field (email or phone based on config)
-        Customer existingCustomer = findExistingTreezCustomer(merchantId, card, matchType);
+        // Step 1: Check if customer already exists by phone
+        Customer existingCustomer = findExistingTreezCustomer(merchantId, card);
         
         if (existingCustomer != null) {
             // Customer exists - link card if not already linked
@@ -554,45 +548,31 @@ public class CustomerSyncService {
     }
 
     /**
-     * Find existing Treez customer by match field (email or phone based on configuration)
+     * Find existing Treez customer by phone number
      * Uses Treez-specific fields for matching
-     * For phone matching, normalizes Boomerangme phone (removes "1" prefix) to match Treez format
+     * Normalizes Boomerangme phone (removes "1" prefix) to match Treez format
      */
-    private Customer findExistingTreezCustomer(String merchantId, Card card, CustomerMatchType matchType) {
-        if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
-            String email = card.getCardholderEmail();
-            if (email != null && !email.isEmpty()) {
-                Optional<Customer> byEmail = customerRepository.findByMerchantIdAndTreezEmailAndIntegrationType(
-                        merchantId, email, IntegrationType.TREEZ);
-                if (byEmail.isPresent()) {
-                    log.info("Found existing Treez customer by email: {}", email);
-                    return byEmail.get();
-                }
+    private Customer findExistingTreezCustomer(String merchantId, Card card) {
+        String phone = card.getCardholderPhone();
+        if (phone != null && !phone.isEmpty()) {
+            // Normalize phone from Boomerangme format (remove "1" prefix) to match Treez format
+            String normalizedPhone = normalizePhoneFromBoomerangme(phone);
+            
+            // Try normalized phone first (without "1" prefix)
+            Optional<Customer> byPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
+                    merchantId, normalizedPhone, IntegrationType.TREEZ);
+            if (byPhone.isPresent()) {
+                log.info("Found existing Treez customer by normalized phone: {}", normalizedPhone);
+                return byPhone.get();
             }
-        }
-        
-        if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
-            String phone = card.getCardholderPhone();
-            if (phone != null && !phone.isEmpty()) {
-                // Normalize phone from Boomerangme format (remove "1" prefix) to match Treez format
-                String normalizedPhone = normalizePhoneFromBoomerangme(phone);
-                
-                // Try normalized phone first (without "1" prefix)
-                Optional<Customer> byPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
-                        merchantId, normalizedPhone, IntegrationType.TREEZ);
-                if (byPhone.isPresent()) {
-                    log.info("Found existing Treez customer by normalized phone: {}", normalizedPhone);
-                    return byPhone.get();
-                }
-                
-                // Also try original phone (with "1" prefix) in case Treez customer has it stored that way
-                if (!phone.equals(normalizedPhone)) {
-                    Optional<Customer> byOriginalPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
-                            merchantId, phone, IntegrationType.TREEZ);
-                    if (byOriginalPhone.isPresent()) {
-                        log.info("Found existing Treez customer by original phone: {}", phone);
-                        return byOriginalPhone.get();
-                    }
+            
+            // Also try original phone (with "1" prefix) in case Treez customer has it stored that way
+            if (!phone.equals(normalizedPhone)) {
+                Optional<Customer> byOriginalPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
+                        merchantId, phone, IntegrationType.TREEZ);
+                if (byOriginalPhone.isPresent()) {
+                    log.info("Found existing Treez customer by original phone: {}", phone);
+                    return byOriginalPhone.get();
                 }
             }
         }
@@ -1054,8 +1034,13 @@ public class CustomerSyncService {
         if (cardData.has("card_type")) {
             card.setCardType(cardData.get("card_type").asText());
         }
-        if (cardData.has("template_id")) {
-            card.setTemplateId(cardData.get("template_id").asText());
+        if (cardData.has("template_id") && !cardData.get("template_id").isNull()) {
+            try {
+                card.setTemplateId(cardData.get("template_id").asInt());
+            } catch (Exception e) {
+                log.warn("Could not parse template_id as integer: {}", cardData.get("template_id").asText());
+                card.setTemplateId(null);
+            }
         }
         if (cardData.has("cardholder_email") && !cardData.get("cardholder_email").isNull()) {
             card.setCardholderEmail(cardData.get("cardholder_email").asText());

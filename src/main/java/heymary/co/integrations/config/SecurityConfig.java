@@ -37,6 +37,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                 .requestMatchers("/webhooks/**").permitAll()
                 .requestMatchers("/api/integration-configs/**").permitAll() // Auth handled by filter
+                .requestMatchers("/api/templates/**").permitAll() // Auth handled by filter
                 .requestMatchers("/api/sync-logs/**").permitAll() // Allow access to sync logs API
                 .requestMatchers("/api/treez/integrations/**").permitAll() // Allow access to Treez integration API
                 .requestMatchers("/", "/logs", "/logs.html", "/treez", "/treez.html", "/static/**", "/css/**", "/js/**").permitAll() // Allow access to UI pages

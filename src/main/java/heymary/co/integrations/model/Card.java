@@ -49,8 +49,13 @@ public class Card {
     @Column(name = "device_type", length = 50)
     private String deviceType; // e.g., "Google Pay", "Apple Wallet", "PWA"
 
-    @Column(name = "template_id", length = 100)
-    private String templateId;
+    @Column(name = "template_id", nullable = false)
+    private Integer templateId; // Boomerangme template ID
+
+    // Many-to-One relationship with Template
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "template_id", referencedColumnName = "template_id", insertable = false, updatable = false)
+    private Template template;
 
     @Column(name = "status", nullable = false, length = 50)
     @Builder.Default

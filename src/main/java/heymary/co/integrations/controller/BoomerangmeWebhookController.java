@@ -6,6 +6,7 @@ import heymary.co.integrations.model.IntegrationConfig;
 import heymary.co.integrations.repository.IntegrationConfigRepository;
 import heymary.co.integrations.service.CustomerSyncService;
 import heymary.co.integrations.service.PointsSyncService;
+import heymary.co.integrations.service.TemplateService;
 import heymary.co.integrations.util.WebhookSecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +24,7 @@ public class BoomerangmeWebhookController {
 
     private final CustomerSyncService customerSyncService;
     private final PointsSyncService pointsSyncService;
+    private final TemplateService templateService;
     private final IntegrationConfigRepository integrationConfigRepository;
     private final ObjectMapper objectMapper;
 
@@ -193,14 +195,28 @@ public class BoomerangmeWebhookController {
                     log.info("Card balance updated event processed successfully");
                     break;
                 
-                // Template/Configuration Events - These don't need customer sync
+                // Template/Configuration Events - Sync template from API
                 case "UserTemplateUpdatedEvent":
                 case "template.updated":
                 case "template.created":
-                    log.info("INFO: Template/configuration update event - no customer sync needed");
-                    log.info("Template ID: {}, Name: {}", 
-                        cardData.has("data") && cardData.get("data").has("id") ? cardData.get("data").get("id").asText() : "unknown",
-                        cardData.has("data") && cardData.get("data").has("name") ? cardData.get("data").get("name").asText() : "unknown");
+                    log.info("ACTION: Processing template update event - syncing template from API");
+                    if (cardData.has("data") && cardData.get("data").has("id")) {
+                        Integer templateId = cardData.get("data").get("id").asInt();
+                        String templateName = cardData.get("data").has("name") 
+                                ? cardData.get("data").get("name").asText() 
+                                : "unknown";
+                        log.info("Template ID: {}, Name: {}", templateId, templateName);
+                        
+                        try {
+                            templateService.syncTemplateFromApi(merchantId, templateId);
+                            log.info("Template {} synced successfully", templateId);
+                        } catch (Exception e) {
+                            log.error("Error syncing template {}: {}", templateId, e.getMessage(), e);
+                            // Don't fail the webhook - log error and continue
+                        }
+                    } else {
+                        log.warn("Template update event missing template ID in data field");
+                    }
                     break;
                 
                 // Unknown Events - Log and attempt to process if structure matches

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -24,6 +25,10 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     
     Optional<Customer> findByMerchantIdAndTreezPhoneAndIntegrationType(
         String merchantId, String treezPhone, IntegrationType integrationType);
+    
+    // Find all customers by merchant and integration type
+    List<Customer> findByMerchantIdAndIntegrationType(
+        String merchantId, IntegrationType integrationType);
     
     // Legacy methods (kept for backward compatibility - can be removed after migration)
     @Deprecated

@@ -81,41 +81,44 @@ public class TreezWebhookController {
             merchantId = config.getMerchantId();
             log.info("Merchant ID: {}", merchantId);
             
-            // Validate Bearer token if configured
-            if (config.getTreezWebhookSecret() != null && !config.getTreezWebhookSecret().isEmpty()) {
-                if (authorization == null || authorization.isEmpty()) {
-                    log.warn("No Authorization header provided for Treez webhook from merchant: {}", merchantId);
-                    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Authorization required");
-                }
-                
-                // Extract token from "Bearer TOKEN" format
-                String providedToken = authorization;
-                if (authorization.startsWith("Bearer ")) {
-                    providedToken = authorization.substring(7).trim();
-                }
-                
-                // Compare tokens
-                boolean isValid = config.getTreezWebhookSecret().equals(providedToken);
-                log.info("Bearer token validation: {}", isValid ? "VALID" : "INVALID");
-                
-                if (!isValid) {
-                    log.warn("Invalid Bearer token for Treez webhook from merchant: {}", merchantId);
-                    log.warn("Expected token starts with: {}...", 
-                            config.getTreezWebhookSecret().length() > 10 
-                                ? config.getTreezWebhookSecret().substring(0, 10) 
-                                : config.getTreezWebhookSecret());
-                    log.warn("Provided token starts with: {}...", 
-                            providedToken.length() > 10 
-                                ? providedToken.substring(0, 10) 
-                                : providedToken);
-                    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid authorization token");
-                }
-                
-                log.info("✓ Bearer token validated successfully");
-            } else {
-                log.warn("Treez webhook secret not configured - skipping authorization validation");
-                log.warn("SECURITY WARNING: Configure treez_webhook_secret in integration_configs for merchant: {}", merchantId);
+            // Enforce Bearer token verification - treez_webhook_secret is required
+            if (config.getTreezWebhookSecret() == null || config.getTreezWebhookSecret().isEmpty()) {
+                log.error("Treez webhook secret not configured for merchant: {}", merchantId);
+                log.error("SECURITY ERROR: treez_webhook_secret must be configured in integration_configs");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body("Webhook authentication not configured in Integrations. Please configure treez webhooksecret.");
             }
+            
+            // Authorization header is required
+            if (authorization == null || authorization.isEmpty()) {
+                log.warn("No Authorization header provided for Treez webhook from merchant: {}", merchantId);
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Authorization required");
+            }
+            
+            // Extract token from "Bearer TOKEN" format
+            String providedToken = authorization;
+            if (authorization.startsWith("Bearer ")) {
+                providedToken = authorization.substring(7).trim();
+            }
+            
+            // Compare tokens
+            boolean isValid = config.getTreezWebhookSecret().equals(providedToken);
+            log.info("Bearer token validation: {}", isValid ? "VALID" : "INVALID");
+            
+            if (!isValid) {
+                log.warn("Invalid Bearer token for Treez webhook from merchant: {}", merchantId);
+                log.warn("Expected token starts with: {}...", 
+                        config.getTreezWebhookSecret().length() > 10 
+                            ? config.getTreezWebhookSecret().substring(0, 10) 
+                            : config.getTreezWebhookSecret());
+                log.warn("Provided token starts with: {}...", 
+                        providedToken.length() > 10 
+                            ? providedToken.substring(0, 10) 
+                            : providedToken);
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid authorization token");
+            }
+            
+            log.info("✓ Bearer token validated successfully");
             
             // Parse JSON payload
             JsonNode webhookData = objectMapper.readTree(payload);
@@ -129,6 +132,25 @@ public class TreezWebhookController {
             // Treez format: { "root": { "event_type": "CUSTOMER", "data": {...} } }
             JsonNode rootNode = webhookData.has("root") ? webhookData.get("root") : webhookData;
             
+            // Log available fields in the payload
+            StringBuilder fields = new StringBuilder();
+            rootNode.fieldNames().forEachRemaining(field -> {
+                if (fields.length() > 0) fields.append(", ");
+                fields.append(field);
+            });
+            log.info("Available fields in root: [{}]", fields.toString());
+            
+            // Handle test webhooks gracefully
+            if (rootNode.has("test")) {
+                log.info("--- Test Webhook Detected ---");
+                String dispensaryName = rootNode.has("dispensary_short_name") 
+                    ? rootNode.get("dispensary_short_name").asText() 
+                    : "unknown";
+                log.info("Test webhook received for dispensary: {}", dispensaryName);
+                log.info("=== TREEZ TEST WEBHOOK PROCESSED SUCCESSFULLY ===");
+                return ResponseEntity.ok("OK, webhook received for testing");
+            }
+            
             if (rootNode.has("event_type")) {
                 eventType = rootNode.get("event_type").asText();
             } else if (webhookData.has("event_type")) {
@@ -138,14 +160,6 @@ public class TreezWebhookController {
             log.info("--- Event Processing ---");
             log.info("Event Type: {}", eventType);
             log.info("Merchant ID: {}", merchantId);
-            
-            // Log available fields in the payload
-            StringBuilder fields = new StringBuilder();
-            rootNode.fieldNames().forEachRemaining(field -> {
-                if (fields.length() > 0) fields.append(", ");
-                fields.append(field);
-            });
-            log.info("Available fields in root: [{}]", fields.toString());
             
             // Process event based on type
             switch (eventType) {
@@ -162,11 +176,22 @@ public class TreezWebhookController {
                     break;
                     
                 case "TICKET":
+                    log.info("Skipping {} event, we only process TICKET_BY_STATUS and TICKET_STATUS events", eventType);
+                    break;
+
                 case "TICKET_BY_STATUS":
                     // TICKET_BY_STATUS is sent when order status changes (e.g., COMPLETED)
                     // Contains same transaction data as TICKET events
                     log.info("ACTION: Processing {} (order/transaction) event from Treez", eventType);
                     treezWebhookService.processTicketEvent(config, rootNode);
+                    log.info("{} event processed successfully", eventType);
+                    break;
+                    
+                case "TICKET_STATUS":
+                    // TICKET_STATUS is a minimal status update event with only ticket_id and order_status
+                    // It doesn't contain full order data, so we check if order exists and skip if already processed
+                    log.info("ACTION: Processing {} (status update) event from Treez", eventType);
+                    treezWebhookService.processTicketStatusEvent(config, rootNode);
                     log.info("{} event processed successfully", eventType);
                     break;
                     

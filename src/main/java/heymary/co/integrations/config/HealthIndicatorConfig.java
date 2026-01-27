@@ -1,6 +1,5 @@
 package heymary.co.integrations.config;
 
-import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.context.annotation.Bean;

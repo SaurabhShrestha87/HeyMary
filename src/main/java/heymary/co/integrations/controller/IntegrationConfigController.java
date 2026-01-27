@@ -3,6 +3,7 @@ package heymary.co.integrations.controller;
 import heymary.co.integrations.model.IntegrationConfig;
 import heymary.co.integrations.repository.IntegrationConfigRepository;
 import heymary.co.integrations.service.InitialSyncService;
+import heymary.co.integrations.service.TemplateService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -31,6 +32,7 @@ public class IntegrationConfigController {
 
     private final IntegrationConfigRepository integrationConfigRepository;
     private final InitialSyncService initialSyncService;
+    private final TemplateService templateService;
 
     @GetMapping
     public ResponseEntity<List<IntegrationConfig>> getAllConfigs() {
@@ -62,8 +64,27 @@ public class IntegrationConfigController {
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
 
+        // Validate that default_template_id is provided
+        if (config.getDefaultTemplateId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new IntegrationConfigResponse(null, "default_template_id is required"));
+        }
+
+        // Save config first (needed for template sync)
         IntegrationConfig saved = integrationConfigRepository.save(config);
         log.info("Created integration config for merchant: {}", config.getMerchantId());
+        
+        // Fetch and sync template from Boomerangme API
+        try {
+            log.info("Fetching template {} for merchant: {}", config.getDefaultTemplateId(), config.getMerchantId());
+            templateService.syncTemplateFromApi(config.getMerchantId(), config.getDefaultTemplateId());
+            log.info("Template {} synced successfully for merchant: {}", config.getDefaultTemplateId(), config.getMerchantId());
+        } catch (Exception e) {
+            log.error("Failed to fetch template {} for merchant {}: {}", 
+                    config.getDefaultTemplateId(), config.getMerchantId(), e.getMessage(), e);
+            // Don't fail the config creation, but log the error
+            // Template can be synced later via webhook or manual sync
+        }
         
         // Trigger initial sync asynchronously
         log.info("Triggering initial sync for merchant: {}", config.getMerchantId());
@@ -71,7 +92,7 @@ public class IntegrationConfigController {
         
         IntegrationConfigResponse response = new IntegrationConfigResponse(
             saved,
-            "Integration config created successfully. Initial sync of cards and customers has been triggered in the background."
+            "Integration config created successfully. Template synced and initial sync of cards and customers has been triggered in the background."
         );
         
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -138,6 +159,35 @@ public class IntegrationConfigController {
         
         SyncResponse response = new SyncResponse(
             "Initial sync triggered successfully for merchant: " + merchantId,
+            "The sync is running in the background. Check the sync logs for progress."
+        );
+        
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+    
+    @PostMapping("/{merchantId}/reverse-sync-and-create")
+    @Operation(
+        summary = "Trigger reverse sync",
+        description = "Manually trigger a reverse sync: fetch Treez customers and create Boomerangme customers/cards if missing. " +
+                     "This syncs customers from Treez to Boomerangme (opposite direction of initial sync)." +
+                     "Carefully consider the impact of this sync before triggering it " + 
+                     "as it will create lots of new HeyMary cards and customers, for all previous Treez customers."
+    )
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "202", description = "Reverse sync triggered successfully"),
+        @ApiResponse(responseCode = "404", description = "Merchant not found")
+    })
+    public ResponseEntity<SyncResponse> triggerReverseSync(@PathVariable String merchantId) {
+        Optional<IntegrationConfig> config = integrationConfigRepository.findByMerchantId(merchantId);
+        if (config.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        log.info("Manually triggering reverse sync for merchant: {}", merchantId);
+        initialSyncService.performReverseSync(config.get());
+        
+        SyncResponse response = new SyncResponse(
+            "Reverse sync triggered successfully for merchant: " + merchantId,
             "The sync is running in the background. Check the sync logs for progress."
         );
         

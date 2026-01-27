@@ -4,21 +4,25 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import heymary.co.integrations.model.Card;
 import heymary.co.integrations.model.Customer;
-import heymary.co.integrations.model.CustomerMatchType;
 import heymary.co.integrations.model.IntegrationConfig;
 import heymary.co.integrations.model.IntegrationType;
 import heymary.co.integrations.model.Order;
+import heymary.co.integrations.model.RewardTier;
 import heymary.co.integrations.model.SyncLog;
+import heymary.co.integrations.util.RewardTierMatcher;
 import heymary.co.integrations.repository.CardRepository;
 import heymary.co.integrations.repository.CustomerRepository;
 import heymary.co.integrations.repository.IntegrationConfigRepository;
 import heymary.co.integrations.repository.OrderRepository;
+import heymary.co.integrations.repository.RewardTierRepository;
 import heymary.co.integrations.repository.SyncLogRepository;
+import heymary.co.integrations.repository.TemplateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -26,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -43,6 +48,9 @@ public class TreezWebhookService {
     private final OrderRepository orderRepository;
     private final IntegrationConfigRepository integrationConfigRepository;
     private final BoomerangmeApiClient boomerangmeApiClient;
+    private final TemplateService templateService;
+    private final TemplateRepository templateRepository;
+    private final RewardTierRepository rewardTierRepository;
     private final ObjectMapper objectMapper;
     private final DeadLetterQueueService deadLetterQueueService;
 
@@ -197,7 +205,7 @@ public class TreezWebhookService {
             String prettyData = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(data);
             log.info("Ticket data:\n{}", prettyData);
             
-            // Extract ticket ID
+            // Extract ticket ID FIRST - needed for idempotency check
             String ticketId = extractTicketId(data);
             if (ticketId == null || "unknown".equals(ticketId)) {
                 log.error("Ticket ID not found in event data");
@@ -232,7 +240,7 @@ public class TreezWebhookService {
             Optional<Order> existingOrder = orderRepository.findByMerchantIdAndExternalOrderIdAndIntegrationType(
                     merchantId, ticketId, IntegrationType.TREEZ);
             if (existingOrder.isPresent() && existingOrder.get().getPointsSynced()) {
-                log.info("Transaction {} already synced, skipping", ticketId);
+                log.warn("Transaction {} already synced, skipping", ticketId);
                 return;
             }
             
@@ -258,19 +266,18 @@ public class TreezWebhookService {
             // Parse order date
             LocalDateTime orderDate = extractOrderDate(data);
             
-            // Check if this is a HEYMARYREDEEM redemption order
-            int heymaryredeemDiscountPoints = extractHeyMaryRedeemDiscountPoints(data);
-            boolean isRedemptionOrder = heymaryredeemDiscountPoints > 0;
+            // Check if this is a redemption order (HM prefix discount)
+            // We'll check this after we have the customer and card to match against reward tiers
+            boolean isRedemptionOrder = false;
+            int redemptionPoints = 0;
             
             int pointsToSync; // Can be positive (earn) or negative (redeem)
             String pointsAction; // "earned" or "redeemed"
             
             if (isRedemptionOrder) {
                 // Redemption order: subtract points (don't earn any)
-                pointsToSync = -heymaryredeemDiscountPoints; // Negative value
+                pointsToSync = -redemptionPoints; // Negative value
                 pointsAction = "redeemed";
-                log.info("Order {} is a HEYMARYREDEEM redemption order - deducting {} points", 
-                         ticketId, heymaryredeemDiscountPoints);
             } else {
                 // Normal order: earn points
                 pointsToSync = calculatePoints(orderTotal);
@@ -327,20 +334,53 @@ public class TreezWebhookService {
                     : customer.getCard().getCardholderId();
             log.info("Found customer {} with Boomerangme card {}", customerId, cardIdentifier);
             
-            // Save order to database
-            Order order = existingOrder.orElse(Order.builder()
-                    .merchantId(merchantId)
-                    .integrationType(IntegrationType.TREEZ)
-                    .externalOrderId(ticketId)
-                    .orderTotal(orderTotal)
-                    .orderDate(orderDate)
-                    .pointsEarned(pointsToSync)  // Can be positive (earned) or negative (redeemed)
-                    .pointsSynced(false)
-                    .build());
+            // Check if this is a redemption order (HM prefix discount matching reward tiers)
+            Card card = customer.getCard();
+            if (card.getTemplateId() != null) {
+                redemptionPoints = extractHMRedeemDiscountPoints(data, card.getTemplateId());
+                isRedemptionOrder = redemptionPoints > 0;
+                if (isRedemptionOrder) {
+                    log.info("Order {} is a HM redemption order - deducting {} points (matched reward tier)", 
+                             ticketId, redemptionPoints);
+                }
+            } else {
+                log.warn("Card {} has no template ID, cannot check for HM redemption discounts", cardIdentifier);
+            }
             
-            order.setCustomer(customer);
-            order = orderRepository.save(order);
-            log.info("Saved order {} to database with {} points ({})", ticketId, Math.abs(pointsToSync), pointsAction);
+            // Save order to database
+            // Note: We already checked for existing order above, so this should be a new order
+            // However, wrap in try-catch to handle race conditions where multiple webhooks arrive simultaneously
+            Order order;
+            try {
+                order = Order.builder()
+                        .merchantId(merchantId)
+                        .integrationType(IntegrationType.TREEZ)
+                        .externalOrderId(ticketId)
+                        .orderTotal(orderTotal)
+                        .orderDate(orderDate)
+                        .pointsEarned(pointsToSync)  // Can be positive (earned) or negative (redeemed)
+                        .pointsSynced(false)
+                        .customer(customer)
+                        .build();
+                
+                order = orderRepository.save(order);
+                log.info("Saved order {} to database with {} points ({})", ticketId, Math.abs(pointsToSync), pointsAction);
+            } catch (DataIntegrityViolationException e) {
+                // Handle race condition: another webhook already created this order
+                log.warn("Order {} already exists (duplicate webhook detected) - checking existing order", ticketId);
+                Optional<Order> duplicateOrder = orderRepository.findByMerchantIdAndExternalOrderIdAndIntegrationType(
+                        merchantId, ticketId, IntegrationType.TREEZ);
+                if (duplicateOrder.isPresent()) {
+                    log.info("Found existing order {} - skipping duplicate processing", ticketId);
+                    createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                            SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                            String.format("{\"status\":\"skipped\",\"message\":\"Order already processed (race condition detected)\",\"order_id\":%d}", duplicateOrder.get().getId()));
+                    return;
+                } else {
+                    // Unexpected error - rethrow
+                    throw e;
+                }
+            }
             
             // Sync points to Boomerangme (send transaction first)
             // Use serialNumber if available, otherwise use cardholderId
@@ -352,14 +392,14 @@ public class TreezWebhookService {
             
             if (isRedemptionOrder) {
                 // Subtract points for redemption
-                String redemptionReason = buildRedemptionReasonMessage(ticketId, orderTotal, heymaryredeemDiscountPoints, orderDate);
+                String redemptionReason = buildRedemptionReasonMessage(ticketId, orderTotal, redemptionPoints, orderDate);
                 log.info("Subtracting {} points from Boomerangme card {} for order {}", 
-                         heymaryredeemDiscountPoints, cardIdForApi, ticketId);
+                         redemptionPoints, cardIdForApi, ticketId);
                 
                 boomerangmeResponse = boomerangmeApiClient.subtractScoresFromCard(
                         config.getBoomerangmeApiKey(),
                         cardIdForApi,
-                        heymaryredeemDiscountPoints,  // Positive number
+                        redemptionPoints,  // Positive number
                         redemptionReason
                 ).block();
             } else {
@@ -383,7 +423,7 @@ public class TreezWebhookService {
             
             if (isRedemptionOrder) {
                 log.info("Successfully redeemed {} points from Boomerangme for order {}. Waiting for webhook to update balance.", 
-                        heymaryredeemDiscountPoints, ticketId);
+                        redemptionPoints, ticketId);
             } else {
                 log.info("Successfully sent {} points to Boomerangme for order {}. Waiting for webhook to update balance.", 
                         pointsToSync, ticketId);
@@ -400,10 +440,10 @@ public class TreezWebhookService {
                 createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
                         SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
                         String.format("{\"points_redeemed\": %d, \"order_total\": %.2f, \"redemption\": true}", 
-                                heymaryredeemDiscountPoints, orderTotal));
+                                redemptionPoints, orderTotal));
                 
                 log.info("Successfully synced Treez redemption transaction {} - {} points redeemed", 
-                         ticketId, heymaryredeemDiscountPoints);
+                         ticketId, redemptionPoints);
             } else {
                 createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
                         SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
@@ -433,6 +473,71 @@ public class TreezWebhookService {
                     e.getMessage(),
                     toJsonString(eventData)
             );
+        }
+    }
+
+    /**
+     * Process TICKET_STATUS event from Treez
+     * This is a minimal status update event that only contains ticket_id and order_status.
+     * Since it doesn't contain full order data (items, totals, customer, etc.), we can't process points.
+     * We check if the order already exists (processed by TICKET or TICKET_BY_STATUS) and skip if so.
+     */
+    @Async("syncTaskExecutor")
+    @Transactional
+    public void processTicketStatusEvent(IntegrationConfig config, JsonNode eventData) {
+        String merchantId = config.getMerchantId();
+        log.info("Processing Treez TICKET_STATUS (status update) event for merchant: {}", merchantId);
+        
+        try {
+            JsonNode data = eventData.has("data") ? eventData.get("data") : eventData;
+            
+            log.info("--- Ticket Status Event Data ---");
+            String prettyData = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(data);
+            log.info("Ticket status data:\n{}", prettyData);
+            
+            // Extract ticket ID
+            String ticketId = extractTicketId(data);
+            if (ticketId == null || "unknown".equals(ticketId)) {
+                log.error("Ticket ID not found in TICKET_STATUS event data");
+                throw new RuntimeException("Ticket ID is required");
+            }
+            log.info("Extracted ticket ID: {}", ticketId);
+            
+            // Extract order status
+            String orderStatus = data.has("order_status") ? data.get("order_status").asText() : null;
+            log.info("Order {} status: {}", ticketId, orderStatus);
+            
+            // Check if order already exists (processed by TICKET or TICKET_BY_STATUS event)
+            Optional<Order> existingOrder = orderRepository.findByMerchantIdAndExternalOrderIdAndIntegrationType(
+                    merchantId, ticketId, IntegrationType.TREEZ);
+            
+            if (existingOrder.isPresent()) {
+                log.info("Order {} already exists in database (processed by TICKET/TICKET_BY_STATUS event) - skipping TICKET_STATUS event", ticketId);
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        String.format("{\"status\":\"skipped\",\"message\":\"Order already processed by TICKET/TICKET_BY_STATUS event\",\"order_id\":%d}", existingOrder.get().getId()));
+                return;
+            }
+            
+            // Order doesn't exist - TICKET_STATUS events don't have enough data to process points
+            // We need full order data (items, totals, customer, discounts) which comes in TICKET/TICKET_BY_STATUS events
+            log.info("Order {} does not exist yet - TICKET_STATUS event has insufficient data to process points. " +
+                    "Waiting for TICKET or TICKET_BY_STATUS event with full order data.", ticketId);
+            createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                    SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                    String.format("{\"status\":\"skipped\",\"message\":\"TICKET_STATUS event has insufficient data - waiting for TICKET/TICKET_BY_STATUS event\",\"order_status\":\"%s\"}", orderStatus));
+            
+        } catch (Exception e) {
+            log.error("Error processing Treez TICKET_STATUS event for merchant {}: {}", 
+                    merchantId, e.getMessage(), e);
+            
+            String ticketId = "unknown";
+            try {
+                ticketId = extractTicketId(eventData.has("data") ? eventData.get("data") : eventData);
+            } catch (Exception ignored) {}
+            
+            createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
+                    SyncLog.SyncStatus.FAILED, e.getMessage(), toJsonString(eventData), null);
         }
     }
 
@@ -655,10 +760,10 @@ public class TreezWebhookService {
         String merchantId = config.getMerchantId();
         log.info("Creating new customer for Treez ID: {}", treezCustomerId);
         
-        // Step 1: Check if Boomerangme customer already exists (by email/phone)
-        // We can check by looking for existing cards with same email/phone
-        // Also fetch from Boomerangme API if not found locally, based on match type
-        Card existingCard = findBoomerangmeCardByEmailOrPhone(config, email, phone);
+        // Step 1: Check if Boomerangme customer already exists (by phone)
+        // We can check by looking for existing cards with same phone
+        // Also fetch from Boomerangme API if not found locally
+        Card existingCard = findBoomerangmeCardByPhone(config, phone);
         
         if (existingCard != null) {
             String cardId = existingCard.getSerialNumber() != null 
@@ -871,97 +976,58 @@ public class TreezWebhookService {
     }
 
     /**
-     * Find Boomerangme card by email or phone
-     * First checks local database, then fetches from Boomerangme API based on match type
-     * Uses the configured match type to determine which field to use for matching
-     * For phone matching, normalizes phone number with "1" prefix for Boomerangme format
+     * Find Boomerangme card by phone number
+     * First checks local database, then fetches from Boomerangme API
+     * Normalizes phone number with "1" prefix for Boomerangme format
      */
-    private Card findBoomerangmeCardByEmailOrPhone(IntegrationConfig config, String email, String phone) {
-        CustomerMatchType matchType = config.getCustomerMatchType() != null 
-                ? config.getCustomerMatchType() 
-                : CustomerMatchType.BOTH; // Default to BOTH
-        
-        log.info("Searching for Boomerangme card using match type: {} (email={}, phone={})", matchType, email, phone);
-        
-        String normalizedPhone = null;
-        if (phone != null && !phone.isEmpty()) {
-            normalizedPhone = normalizePhoneForBoomerangme(phone);
+    private Card findBoomerangmeCardByPhone(IntegrationConfig config, String phone) {
+        if (phone == null || phone.isEmpty()) {
+            log.warn("Phone number is required for finding Boomerangme card");
+            return null;
         }
+        
+        log.info("Searching for Boomerangme card by phone: {}", phone);
+        
+        String normalizedPhone = normalizePhoneForBoomerangme(phone);
         
         // Step 1: Check local database first
-        // Try email first (for EMAIL or BOTH)
-        if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
-            if (email != null && !email.isEmpty()) {
-                Optional<Card> cardByEmail = cardRepository.findByCardholderEmail(email);
-                if (cardByEmail.isPresent()) {
-                    log.info("Found existing Boomerangme card in local DB by email: {}", email);
-                    return cardByEmail.get();
-                }
+        if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
+            // Try normalized phone first (with "1" prefix)
+            Optional<Card> cardByPhone = cardRepository.findByCardholderPhone(normalizedPhone);
+            if (cardByPhone.isPresent()) {
+                log.info("Found existing Boomerangme card in local DB by phone: {}", normalizedPhone);
+                return cardByPhone.get();
             }
-        }
-        
-        // Try phone (for PHONE or BOTH if email didn't match)
-        if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
-            if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
-                // Try normalized phone first (with "1" prefix)
-                Optional<Card> cardByPhone = cardRepository.findByCardholderPhone(normalizedPhone);
-                if (cardByPhone.isPresent()) {
-                    log.info("Found existing Boomerangme card in local DB by phone: {}", normalizedPhone);
-                    return cardByPhone.get();
-                }
-                
-                // Also try original phone (without prefix) in case card was saved differently
-                if (phone != null && !phone.equals(normalizedPhone)) {
-                    Optional<Card> cardByOriginalPhone = cardRepository.findByCardholderPhone(phone);
-                    if (cardByOriginalPhone.isPresent()) {
-                        log.info("Found existing Boomerangme card in local DB by original phone: {}", phone);
-                        return cardByOriginalPhone.get();
-                    }
+            
+            // Also try original phone (without prefix) in case card was saved differently
+            if (!phone.equals(normalizedPhone)) {
+                Optional<Card> cardByOriginalPhone = cardRepository.findByCardholderPhone(phone);
+                if (cardByOriginalPhone.isPresent()) {
+                    log.info("Found existing Boomerangme card in local DB by original phone: {}", phone);
+                    return cardByOriginalPhone.get();
                 }
             }
         }
         
         // Step 2: Not found locally - fetch from Boomerangme API
-        log.info("Card not found in local DB, fetching from Boomerangme API using match type: {}", matchType);
+        log.info("Card not found in local DB, fetching from Boomerangme API by phone: {}", normalizedPhone);
         
         try {
-            JsonNode cardsResponse = null;
-            
-            // Try email first (for EMAIL or BOTH)
-            if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
-                if (email != null && !email.isEmpty()) {
-                    log.debug("Searching Boomerangme API by email: {}", email);
-                    cardsResponse = boomerangmeApiClient.searchCardsByEmail(
-                            config.getBoomerangmeApiKey(), email
-                    ).block();
-                    
-                    // If found, process and return
-                    if (cardsResponse != null && cardsResponse.has("data") && 
-                        cardsResponse.get("data").isArray() && cardsResponse.get("data").size() > 0) {
-                        log.info("Found card in Boomerangme API by email");
-                        return processBoomerangmeCardResponse(config.getMerchantId(), cardsResponse);
-                    }
+            if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
+                log.debug("Searching Boomerangme API by phone: {}", normalizedPhone);
+                JsonNode cardsResponse = boomerangmeApiClient.searchCardsByPhone(
+                        config.getBoomerangmeApiKey(), normalizedPhone
+                ).block();
+                
+                // If found, process and return
+                if (cardsResponse != null && cardsResponse.has("data") && 
+                    cardsResponse.get("data").isArray() && cardsResponse.get("data").size() > 0) {
+                    log.info("Found card in Boomerangme API by phone");
+                    return processBoomerangmeCardResponse(config.getMerchantId(), cardsResponse);
                 }
             }
             
-            // Try phone if email didn't find anything (for PHONE or BOTH)
-            if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
-                if (normalizedPhone != null && !normalizedPhone.isEmpty()) {
-                    log.debug("Searching Boomerangme API by phone: {}", normalizedPhone);
-                    cardsResponse = boomerangmeApiClient.searchCardsByPhone(
-                            config.getBoomerangmeApiKey(), normalizedPhone
-                    ).block();
-                    
-                    // If found, process and return
-                    if (cardsResponse != null && cardsResponse.has("data") && 
-                        cardsResponse.get("data").isArray() && cardsResponse.get("data").size() > 0) {
-                        log.info("Found card in Boomerangme API by phone");
-                        return processBoomerangmeCardResponse(config.getMerchantId(), cardsResponse);
-                    }
-                }
-            }
-            
-            log.info("Card not found in Boomerangme API by either email or phone");
+            log.info("Card not found in Boomerangme API by phone");
             return null;
         } catch (Exception e) {
             log.error("Error fetching cards from Boomerangme API: {}", e.getMessage(), e);
@@ -1015,17 +1081,12 @@ public class TreezWebhookService {
      * Uses Treez-specific fields (treez_email or treez_phone) based on configuration
      */
     private Card fetchBoomerangmeCardForCustomer(IntegrationConfig config, Customer customer) {
-        CustomerMatchType matchType = config.getCustomerMatchType() != null 
-                ? config.getCustomerMatchType() 
-                : CustomerMatchType.BOTH; // Default to BOTH
+        log.info("Fetching Boomerangme card for customer {} by phone", customer.getId());
         
-        log.info("Fetching Boomerangme card for customer {} using match type: {}", customer.getId(), matchType);
-        
-        // Use Treez-specific fields for matching
-        String email = customer.getTreezEmail();
+        // Use Treez phone for matching
         String phone = customer.getTreezPhone();
         
-        return findBoomerangmeCardByEmailOrPhone(config, email, phone);
+        return findBoomerangmeCardByPhone(config, phone);
     }
 
     /**
@@ -1090,8 +1151,25 @@ public class TreezWebhookService {
                 }
             }
             
-            // Update card fields from API response
+            // Get config for template sync and default template
+            IntegrationConfig config = integrationConfigRepository.findByMerchantId(merchantId)
+                    .orElseThrow(() -> new RuntimeException("Integration config not found for merchant: " + merchantId));
+            
+            // Update card fields from API response (this will set template_id if present in data)
             updateCardFromBoomerangmeResponse(card, cardData);
+            
+            // Ensure template_id is set (use default if not in API response)
+            if (card.getTemplateId() == null) {
+                if (config.getDefaultTemplateId() != null) {
+                    card.setTemplateId(config.getDefaultTemplateId());
+                    log.info("Using default template {} for card {} (not in API response)", config.getDefaultTemplateId(), card.getCardholderId());
+                } else {
+                    throw new RuntimeException("Cannot save card: template_id is required but not provided and no default_template_id in config for merchant: " + merchantId);
+                }
+            }
+            
+            // Ensure template exists before saving card (required for foreign key)
+            ensureTemplateExists(merchantId, card.getTemplateId(), config);
             
             card = cardRepository.save(card);
             log.info("Saved card (cardholder_id: {}, serial_number: {}) to database", cardholderId, serialNumber);
@@ -1126,11 +1204,23 @@ public class TreezWebhookService {
         }
         
         // Template ID - API uses "templateId", webhook uses "template_id"
+        // Just extract template_id from API data - default template logic is handled in saveCardFromBoomerangmeResponse
         if (cardData.has("template_id") && !cardData.get("template_id").isNull()) {
-            card.setTemplateId(cardData.get("template_id").asText());
+            try {
+                card.setTemplateId(cardData.get("template_id").asInt());
+            } catch (Exception e) {
+                log.warn("Could not parse template_id as integer: {}", cardData.get("template_id").asText());
+                // Leave null - will be set to default in saveCardFromBoomerangmeResponse
+            }
         } else if (cardData.has("templateId") && !cardData.get("templateId").isNull()) {
-            card.setTemplateId(cardData.get("templateId").asText());
+            try {
+                card.setTemplateId(cardData.get("templateId").asInt());
+            } catch (Exception e) {
+                log.warn("Could not parse templateId as integer: {}", cardData.get("templateId").asText());
+                // Leave null - will be set to default in saveCardFromBoomerangmeResponse
+            }
         }
+        // If no template_id in API response, leave null - will be set to default in saveCardFromBoomerangmeResponse
         
         // Extract customer data - handle both webhook format and API response format
         JsonNode customerNode = null;
@@ -1547,21 +1637,30 @@ public class TreezWebhookService {
     }
 
     /**
-     * Extract HEYMARYREDEEM discount amount from order data
-     * Returns the absolute sum of all discounts with reason "HEYMARYREDEEM"
-     * Returns 0 if no HEYMARYREDEEM discounts found
+     * Extract HM redemption discount points from order data by matching discount titles to reward tiers
+     * Checks for discounts with titles starting with "HM" prefix
+     * Extracts the remaining part after "HM" and matches it against reward tiers from the card's template
+     * Returns the THRESHOLD points (points required to unlock the reward) from the matched reward tier
+     * 
+     * Important: Uses tier.getThreshold() (points cost), NOT tier.getValue() (reward amount)
+     * 
+     * Example:
+     * - Discount: "HM 10$ off"
+     * - Matches reward tier: "10$ off" with threshold=50, value=10.00
+     * - Returns: 50 points (threshold), not 10 (value)
      * 
      * Treez webhook structure:
      * - data.items[] - array of order items
      * - data.items[].discounts[] - array of discounts applied to each item
-     * - discount object may have: discount_reason, discount_amount, savings, amount
+     * - discount object has: discount_title (e.g., "HM 10$ off")
      * 
      * @param data Order/ticket data from Treez webhook
-     * @return Total HEYMARYREDEEM discount points (absolute value, converted to int)
+     * @param templateId Template ID from the customer's card
+     * @return Total redemption points (threshold values) from matched reward tiers, or 0 if no matches found
      */
-    private int extractHeyMaryRedeemDiscountPoints(JsonNode data) {
-        double totalHeyMaryRedeemDiscount = 0.0;
-        int heymaryredeemCount = 0;
+    private int extractHMRedeemDiscountPoints(JsonNode data, Integer templateId) {
+        int totalRedemptionPoints = 0;
+        int matchedDiscountCount = 0;
         
         try {
             // Check if items array exists
@@ -1569,6 +1668,15 @@ public class TreezWebhookService {
                 log.debug("No items array found in order data");
                 return 0;
             }
+            
+            // Get all reward tiers for this template
+            List<RewardTier> rewardTiers = rewardTierRepository.findByTemplateId(templateId);
+            if (rewardTiers.isEmpty()) {
+                log.debug("No reward tiers found for template {}", templateId);
+                return 0;
+            }
+            
+            log.debug("Found {} reward tiers for template {}", rewardTiers.size(), templateId);
             
             JsonNode items = data.get("items");
             
@@ -1582,51 +1690,80 @@ public class TreezWebhookService {
                 
                 // Iterate through each discount on this item
                 for (JsonNode discount : discounts) {
-                    // Check if this is a HEYMARYREDEEM discount
-                    String discountReason = null;
-                    if (discount.has("discount_reason") && !discount.get("discount_reason").isNull()) {
-                        discountReason = discount.get("discount_reason").asText();
+                    // Check if discount has a title starting with "HM"
+                    String discountTitle = null;
+                    if (discount.has("discount_title") && !discount.get("discount_title").isNull()) {
+                        discountTitle = discount.get("discount_title").asText();
                     }
                     
-                    // If not HEYMARYREDEEM, skip this discount
-                    if (discountReason == null || !discountReason.equalsIgnoreCase("HEYMARYREDEEM")) {
+                    if (discountTitle == null || discountTitle.isEmpty()) {
                         continue;
                     }
                     
-                    // This is a HEYMARYREDEEM discount - extract the amount
-                    double discountAmount = 0.0;
+                    // Use utility method to find matching reward tier
+                    Optional<RewardTier> matchedTier = RewardTierMatcher.findMatchingRewardTier(discountTitle, rewardTiers);
                     
-                    // Try different field names (Treez may use different naming)
-                    if (discount.has("discount_amount") && !discount.get("discount_amount").isNull()) {
-                        discountAmount = discount.get("discount_amount").asDouble();
-                    } else if (discount.has("savings") && !discount.get("savings").isNull()) {
-                        discountAmount = discount.get("savings").asDouble();
-                    } else if (discount.has("amount") && !discount.get("amount").isNull()) {
-                        discountAmount = discount.get("amount").asDouble();
+                    if (matchedTier.isPresent()) {
+                        RewardTier tier = matchedTier.get();
+                        // Use threshold (points required to unlock), NOT value (reward amount)
+                        int thresholdPoints = tier.getThreshold();
+                        totalRedemptionPoints += thresholdPoints;
+                        matchedDiscountCount++;
+                        
+                        log.info("Matched HM discount '{}' to reward tier '{}' - deducting {} points (threshold, not value)", 
+                                discountTitle, tier.getName(), thresholdPoints);
+                    } else {
+                        // Only log if it starts with HM (to avoid spam for non-HM discounts)
+                        if (discountTitle.toUpperCase().trim().startsWith("HM")) {
+                            log.warn("HM discount '{}' does not match any reward tier for template {}", 
+                                    discountTitle, templateId);
+                        }
                     }
-                    
-                    // Use absolute value (discount amounts may be negative in Treez)
-                    double absoluteAmount = Math.abs(discountAmount);
-                    totalHeyMaryRedeemDiscount += absoluteAmount;
-                    heymaryredeemCount++;
-                    
-                    log.debug("Found HEYMARYREDEEM discount: ${} (original value: ${})", absoluteAmount, discountAmount);
                 }
             }
             
-            if (heymaryredeemCount > 0) {
-                int points = calculatePoints(BigDecimal.valueOf(totalHeyMaryRedeemDiscount));
-                log.info("Extracted {} HEYMARYREDEEM discount(s) totaling ${} ({} points)", 
-                         heymaryredeemCount, totalHeyMaryRedeemDiscount, points);
-                return points;
+            if (matchedDiscountCount > 0) {
+                log.info("Extracted {} HM redemption discount(s) totaling {} points from template {}", 
+                         matchedDiscountCount, totalRedemptionPoints, templateId);
+                return totalRedemptionPoints;
             } else {
-                log.debug("No HEYMARYREDEEM discounts found in order");
+                log.debug("No HM redemption discounts found in order");
                 return 0;
             }
             
         } catch (Exception e) {
-            log.error("Error extracting HEYMARYREDEEM discounts: {}", e.getMessage(), e);
+            log.error("Error extracting HM redemption discounts: {}", e.getMessage(), e);
             return 0;
+        }
+    }
+
+    /**
+     * Ensure template exists in database before saving card.
+     * If template doesn't exist, fetch it from Boomerangme API.
+     * 
+     * @param merchantId Merchant ID
+     * @param templateId Template ID to check
+     * @param config Integration config (for API key)
+     */
+    private void ensureTemplateExists(String merchantId, Integer templateId, IntegrationConfig config) {
+        if (templateId == null) {
+            return;
+        }
+        
+        // Check if template already exists
+        if (templateRepository.findByTemplateId(templateId).isPresent()) {
+            log.debug("Template {} already exists in database", templateId);
+            return;
+        }
+        
+        // Template doesn't exist - fetch it from API
+        log.info("Template {} not found in database, fetching from Boomerangme API for merchant: {}", templateId, merchantId);
+        try {
+            templateService.syncTemplateFromApi(merchantId, templateId);
+            log.info("Template {} fetched and synced successfully", templateId);
+        } catch (Exception e) {
+            log.error("Failed to fetch template {} for merchant {}: {}", templateId, merchantId, e.getMessage(), e);
+            throw new RuntimeException("Template " + templateId + " does not exist and could not be fetched from Boomerangme API: " + e.getMessage(), e);
         }
     }
 }

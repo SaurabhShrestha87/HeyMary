@@ -1,3 +1,103 @@
+-- Create templates table FIRST (needed for foreign keys)
+-- template_id is the primary key (Boomerangme template ID is globally unique)
+CREATE TABLE templates (
+    template_id INTEGER PRIMARY KEY, -- Boomerangme template ID (primary key)
+    merchant_id VARCHAR(255) NOT NULL, -- Links to integration_configs.merchant_id
+    company_id INTEGER, -- From Boomerangme API response
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50), -- e.g., "reward", "stamp", "discount"
+    install_link VARCHAR(500),
+    qr_link VARCHAR(500),
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at_local TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at_local TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_templates_merchant_id ON templates(merchant_id);
+
+COMMENT ON TABLE templates IS 'Boomerangme loyalty card templates. Stores template configuration fetched from /api/v2/templates/{template_id}';
+COMMENT ON COLUMN templates.template_id IS 'Boomerangme template ID (primary identifier from API)';
+COMMENT ON COLUMN templates.merchant_id IS 'Merchant identifier - links to integration_configs.merchant_id';
+COMMENT ON COLUMN templates.synced_at IS 'Last time template was synced from Boomerangme API';
+
+-- Create template_custom_fields table (modular storage for custom fields)
+CREATE TABLE template_custom_fields (
+    id BIGSERIAL PRIMARY KEY,
+    template_id INTEGER NOT NULL REFERENCES templates(template_id) ON DELETE CASCADE,
+    field_id INTEGER NOT NULL, -- From Boomerangme API (customFields[].id)
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(50) NOT NULL, -- e.g., "FName", "SName", "phone", "email", "DateOfBirth"
+    "order" INTEGER DEFAULT 0,
+    required BOOLEAN DEFAULT false,
+    unique_field BOOLEAN DEFAULT false,
+    value TEXT, -- Current value (null for template definition)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_template_custom_fields_template_id ON template_custom_fields(template_id);
+CREATE INDEX idx_template_custom_fields_field_id ON template_custom_fields(field_id);
+CREATE UNIQUE INDEX uk_template_custom_fields_template_field ON template_custom_fields(template_id, field_id);
+
+COMMENT ON TABLE template_custom_fields IS 'Custom fields defined in Boomerangme templates. Modular storage for template configuration.';
+COMMENT ON COLUMN template_custom_fields.template_id IS 'Boomerangme template ID';
+COMMENT ON COLUMN template_custom_fields.field_id IS 'Boomerangme custom field ID';
+COMMENT ON COLUMN template_custom_fields.value IS 'Current value (null for template definition, populated when used on cards)';
+
+-- Create reward_tiers table
+CREATE TABLE reward_tiers (
+    id BIGSERIAL PRIMARY KEY,
+    template_id INTEGER NOT NULL REFERENCES templates(template_id) ON DELETE CASCADE,
+    tier_id INTEGER NOT NULL, -- From Boomerangme API (rewardTiers[].id)
+    name VARCHAR(255) NOT NULL,
+    type INTEGER NOT NULL, -- 0 = gift, 1 = cashback, 2 = discount percentage
+    threshold INTEGER NOT NULL, -- Points required to unlock this tier
+    value DECIMAL(10, 2) NOT NULL, -- Reward value (amount or percentage)
+    value_limit INTEGER DEFAULT 0, -- Maximum value limit (0 = unlimited)
+    usage_limit INTEGER DEFAULT 0, -- Maximum usage limit (0 = unlimited)
+    
+    -- Future POS sync fields (reserved for later implementation)
+    pos_discount_id VARCHAR(100), -- POS discount/coupon ID (for syncing to Treez/Dutchie)
+    pos_synced BOOLEAN DEFAULT false, -- Whether this tier has been synced to POS
+    pos_synced_at TIMESTAMP, -- Last sync time to POS
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_reward_tiers_template_id ON reward_tiers(template_id);
+CREATE INDEX idx_reward_tiers_tier_id ON reward_tiers(tier_id);
+CREATE UNIQUE INDEX uk_reward_tiers_template_tier ON reward_tiers(template_id, tier_id);
+CREATE INDEX idx_reward_tiers_pos_synced ON reward_tiers(pos_synced, pos_synced_at);
+
+COMMENT ON TABLE reward_tiers IS 'Reward tiers defined in Boomerangme templates. Will be synced to POS systems (Treez/Dutchie) in the future.';
+COMMENT ON COLUMN reward_tiers.tier_id IS 'Boomerangme reward tier ID';
+COMMENT ON COLUMN reward_tiers.type IS 'Reward type: 0 = gift, 1 = cashback, 2 = discount percentage';
+COMMENT ON COLUMN reward_tiers.threshold IS 'Points required to unlock this reward tier';
+COMMENT ON COLUMN reward_tiers.pos_discount_id IS 'POS discount/coupon ID (reserved for future POS sync)';
+COMMENT ON COLUMN reward_tiers.pos_synced IS 'Whether this tier has been synced to POS system';
+
+-- Create reward_programs table (for spend/visit/points mechanics)
+CREATE TABLE reward_programs (
+    id BIGSERIAL PRIMARY KEY,
+    template_id INTEGER NOT NULL UNIQUE REFERENCES templates(template_id) ON DELETE CASCADE,
+    mechanics_type VARCHAR(50) NOT NULL, -- 'spend', 'visit', or 'points'
+    points_per_unit INTEGER, -- Points per unit (e.g., 10 points per $1 for spend)
+    unit_amount DECIMAL(10, 2), -- Unit amount (e.g., 1.00 for $1)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_reward_programs_template_id ON reward_programs(template_id);
+CREATE INDEX idx_reward_programs_mechanics_type ON reward_programs(mechanics_type);
+
+COMMENT ON TABLE reward_programs IS 'Reward program mechanics (spend/visit/points) for templates. Used for calculating points from orders.';
+COMMENT ON COLUMN reward_programs.mechanics_type IS 'Mechanics type: spend (points per dollar), visit (points per visit), or points (manual)';
+COMMENT ON COLUMN reward_programs.points_per_unit IS 'Points awarded per unit (e.g., 10 points per $1 for spend mechanics)';
+COMMENT ON COLUMN reward_programs.unit_amount IS 'Unit amount (e.g., 1.00 for $1 spent)';
+
 -- Create integration_configs table with all columns
 CREATE TABLE integration_configs (
     id BIGSERIAL PRIMARY KEY,
@@ -6,7 +106,9 @@ CREATE TABLE integration_configs (
     boomerangme_webhook_secret VARCHAR(500),
     boomerangme_program_id VARCHAR(255),
     integration_type VARCHAR(50) NOT NULL DEFAULT 'DUTCHIE',
-    default_template_id INTEGER,
+    default_template_id INTEGER NOT NULL REFERENCES templates(template_id),
+    treez_client_id VARCHAR(500), -- Client ID for Treez API token generation and requests
+    reward_program_points_per_dollar DECIMAL(10, 2), -- Points per dollar spent (e.g., 10.00 = 10 points per $1)
     dutchie_api_key VARCHAR(500),
     dutchie_auth_header VARCHAR(500),
     dutchie_webhook_secret VARCHAR(500),
@@ -21,13 +123,16 @@ CREATE TABLE integration_configs (
 );
 
 CREATE INDEX idx_integration_configs_merchant_id ON integration_configs(merchant_id);
+CREATE UNIQUE INDEX uk_integration_configs_default_template_id ON integration_configs(default_template_id);
 
 COMMENT ON COLUMN integration_configs.dutchie_auth_header IS 'Pre-computed Basic Auth header for Dutchie API (Basic <base64(apiKey:)>). Auto-computed when dutchie_api_key is saved.';
 COMMENT ON COLUMN integration_configs.boomerangme_webhook_secret IS 'Webhook secret for validating Boomerangme webhook signatures';
 COMMENT ON COLUMN integration_configs.treez_webhook_secret IS 'Bearer token for Treez webhook authentication';
 COMMENT ON COLUMN integration_configs.integration_type IS 'POS integration type for this merchant: TREEZ or DUTCHIE';
-COMMENT ON COLUMN integration_configs.default_template_id IS 'Default template ID to use when creating cards for this integration. If not set, the system will use the template ID from the request or a system default.';
+COMMENT ON COLUMN integration_configs.default_template_id IS 'Default template ID (FK to templates) - must be set when creating integration config. Template will be fetched from Boomerangme API.';
 COMMENT ON COLUMN integration_configs.customer_match_type IS 'Field used to match Treez customers with Boomerangme cards: PHONE, EMAIL, or BOTH (default: BOTH)';
+COMMENT ON COLUMN integration_configs.treez_client_id IS 'Client ID for Treez API token generation and requests';
+COMMENT ON COLUMN integration_configs.reward_program_points_per_dollar IS 'Points awarded per dollar spent (e.g., 10.00 = 10 points per $1). Can be fetched from Boomerangme API or manually configured.';
 
 -- Create cards table
 CREATE TABLE cards (
@@ -37,7 +142,7 @@ CREATE TABLE cards (
     cardholder_id VARCHAR(100) NOT NULL,
     card_type VARCHAR(50),
     device_type VARCHAR(50),
-    template_id VARCHAR(100),
+    template_id INTEGER NOT NULL REFERENCES templates(template_id),
     status VARCHAR(50) NOT NULL DEFAULT 'not_installed',
     
     -- Cardholder Information
@@ -86,9 +191,11 @@ CREATE INDEX idx_cards_serial_number ON cards(serial_number);
 CREATE INDEX idx_cards_cardholder_id ON cards(cardholder_id);
 CREATE INDEX idx_cards_merchant_id ON cards(merchant_id);
 CREATE INDEX idx_cards_status ON cards(status);
+CREATE INDEX idx_cards_template_id ON cards(template_id);
 
 COMMENT ON TABLE cards IS 'Boomerangme loyalty cards - one-to-one relationship with customers';
 COMMENT ON COLUMN cards.serial_number IS 'Unique identifier for Boomerangme cards. Present in CardIssuedEvent but may not be in API responses.';
+COMMENT ON COLUMN cards.template_id IS 'Boomerangme template ID (FK to templates) - required for all cards';
 
 -- Create customers table
 CREATE TABLE customers (
@@ -224,4 +331,3 @@ CREATE TABLE dead_letter_queue (
 CREATE INDEX idx_dlq_merchant_id ON dead_letter_queue(merchant_id);
 CREATE INDEX idx_dlq_resolved ON dead_letter_queue(resolved, created_at);
 CREATE INDEX idx_dlq_entity ON dead_letter_queue(entity_type, entity_id);
-

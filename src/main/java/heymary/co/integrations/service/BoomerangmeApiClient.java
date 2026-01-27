@@ -510,5 +510,50 @@ public class BoomerangmeApiClient {
                 })
                 .doOnError(error -> log.error("Error fetching cards page {}: {}", page, error.getMessage()));
     }
+
+    /**
+     * Get template details by template ID
+     * GET /api/v2/templates/{templateId}
+     * 
+     * @param apiKey Boomerangme API key
+     * @param templateId Template ID
+     * @return JsonNode with template details (wrapped in data field)
+     */
+    public Mono<JsonNode> getTemplate(String apiKey, Integer templateId) {
+        log.debug("Fetching template details for template ID: {}", templateId);
+        
+        return webClient.get()
+                .uri("/api/v2/templates/{templateId}", templateId)
+                .header("X-API-Key", apiKey)
+                .retrieve()
+                .onStatus(status -> status.isError(), response -> {
+                    return response.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                log.error("Boomerangme API error fetching template: {} - {}", response.statusCode(), body);
+                                return Mono.error(new ApiException(
+                                    "Failed to fetch template: " + response.statusCode(),
+                                    response.statusCode().value(),
+                                    body
+                                ));
+                            });
+                })
+                .bodyToMono(JsonNode.class)
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof ApiException apiEx && 
+                                (apiEx.getStatusCode() >= 500 || apiEx.getStatusCode() == 0))
+                        .doBeforeRetry(retrySignal -> 
+                            log.warn("Retrying fetch template, attempt: {}", retrySignal.totalRetries() + 1))
+                )
+                .doOnSuccess(response -> {
+                    if (response.has("data")) {
+                        JsonNode data = response.get("data");
+                        String templateName = data.has("name") ? data.get("name").asText() : "unknown";
+                        log.info("Successfully fetched template {}: {}", templateId, templateName);
+                    } else {
+                        log.info("Successfully fetched template {}", templateId);
+                    }
+                })
+                .doOnError(error -> log.error("Error fetching template {}: {}", templateId, error.getMessage()));
+    }
 }
 

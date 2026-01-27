@@ -5,11 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import heymary.co.integrations.exception.ApiException;
 import heymary.co.integrations.model.Card;
 import heymary.co.integrations.model.Customer;
-import heymary.co.integrations.model.CustomerMatchType;
 import heymary.co.integrations.model.IntegrationConfig;
 import heymary.co.integrations.model.IntegrationType;
 import heymary.co.integrations.repository.CardRepository;
 import heymary.co.integrations.repository.CustomerRepository;
+import heymary.co.integrations.repository.IntegrationConfigRepository;
+import heymary.co.integrations.repository.TemplateRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -20,6 +21,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -36,6 +38,9 @@ public class InitialSyncService {
     private final TreezApiClient treezApiClient;
     private final CardRepository cardRepository;
     private final CustomerRepository customerRepository;
+    private final IntegrationConfigRepository integrationConfigRepository;
+    private final TemplateService templateService;
+    private final TemplateRepository templateRepository;
     private final ObjectMapper objectMapper;
 
     /**
@@ -155,6 +160,232 @@ public class InitialSyncService {
     }
 
     /**
+     * Perform reverse sync: fetch Treez customers and create Boomerangme customers/cards if missing
+     * This syncs customers from Treez to Boomerangme (opposite direction of initial sync)
+     * 
+     * @param config Integration configuration
+     */
+    @Async("syncTaskExecutor")
+    @Transactional
+    public void performReverseSync(IntegrationConfig config) {
+        String merchantId = config.getMerchantId();
+        log.info("Starting reverse sync for merchant: {}", merchantId);
+        
+        try {
+            // Get all Treez customers for this merchant that don't have Boomerangme cards
+            List<Customer> treezCustomers = customerRepository.findByMerchantIdAndIntegrationType(
+                    merchantId, IntegrationType.TREEZ);
+            
+            int totalCustomers = treezCustomers.size();
+            int customersProcessed = 0;
+            int customersLinked = 0;
+            int customersCreated = 0;
+            
+            log.info("Found {} Treez customers to process for reverse sync", totalCustomers);
+            
+            for (Customer customer : treezCustomers) {
+                try {
+                    // Skip if customer already has a card
+                    if (customer.getCard() != null) {
+                        log.debug("Customer {} already has Boomerangme card, skipping", customer.getId());
+                        customersProcessed++;
+                        continue;
+                    }
+                    
+                    // Skip if customer doesn't have phone number (required for matching)
+                    String phone = customer.getTreezPhone();
+                    if (phone == null || phone.isEmpty()) {
+                        log.debug("Customer {} has no phone number, skipping reverse sync", customer.getId());
+                        customersProcessed++;
+                        continue;
+                    }
+                    
+                    // Check if Boomerangme card exists for this phone
+                    Card existingCard = findBoomerangmeCardByPhone(config, phone);
+                    
+                    if (existingCard != null) {
+                        // Link existing card to customer
+                        customer.setCard(existingCard);
+                        customer.setSyncedAt(LocalDateTime.now());
+                        customerRepository.save(customer);
+                        customersLinked++;
+                        log.info("Linked existing Boomerangme card to Treez customer {}", customer.getExternalCustomerId());
+                    } else {
+                        // Create Boomerangme customer (card will be installed manually)
+                        boolean created = createBoomerangmeCustomerForTreezCustomer(config, customer);
+                        if (created) {
+                            customersCreated++;
+                        }
+                    }
+                    
+                    customersProcessed++;
+                    
+                } catch (Exception e) {
+                    log.error("Error processing Treez customer {} for reverse sync: {}", 
+                            customer.getId(), e.getMessage(), e);
+                    // Continue with next customer
+                }
+            }
+            
+            log.info("Reverse sync completed for merchant {}. Customers processed: {}, Linked: {}, Created: {}", 
+                    merchantId, customersProcessed, customersLinked, customersCreated);
+                    
+        } catch (Exception e) {
+            log.error("Reverse sync failed for merchant {}: {}", merchantId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Find Boomerangme card by phone number
+     * Checks local database first, then Boomerangme API
+     */
+    private Card findBoomerangmeCardByPhone(IntegrationConfig config, String phone) {
+        if (phone == null || phone.isEmpty()) {
+            return null;
+        }
+        
+        // Normalize phone for Boomerangme (add "1" prefix if needed)
+        String normalizedPhone = normalizePhoneForBoomerangme(phone);
+        
+        // Check local database
+        Optional<Card> cardByPhone = cardRepository.findByCardholderPhone(normalizedPhone);
+        if (cardByPhone.isPresent()) {
+            log.debug("Found Boomerangme card in local DB by phone: {}", normalizedPhone);
+            return cardByPhone.get();
+        }
+        
+        // Also try original phone
+        if (!phone.equals(normalizedPhone)) {
+            Optional<Card> cardByOriginalPhone = cardRepository.findByCardholderPhone(phone);
+            if (cardByOriginalPhone.isPresent()) {
+                log.debug("Found Boomerangme card in local DB by original phone: {}", phone);
+                return cardByOriginalPhone.get();
+            }
+        }
+        
+        // Not found locally - try Boomerangme API
+        try {
+            JsonNode cardsResponse = boomerangmeApiClient.searchCardsByPhone(
+                    config.getBoomerangmeApiKey(), normalizedPhone
+            ).block();
+            
+            if (cardsResponse != null && cardsResponse.has("data") && 
+                cardsResponse.get("data").isArray() && cardsResponse.get("data").size() > 0) {
+                // Process and save card from API response
+                JsonNode cardData = cardsResponse.get("data").get(0);
+                Card card = saveCardFromBoomerangmeResponse(config.getMerchantId(), cardData);
+                if (card != null) {
+                    log.info("Found and saved Boomerangme card from API by phone: {}", normalizedPhone);
+                    return card;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Error searching Boomerangme API by phone: {}", e.getMessage());
+        }
+        
+        return null;
+    }
+
+    /**
+     * Normalize phone number for Boomerangme (add "1" prefix if needed)
+     */
+    private String normalizePhoneForBoomerangme(String phone) {
+        if (phone == null || phone.isEmpty()) {
+            return phone;
+        }
+        
+        String digitsOnly = phone.replaceAll("[^0-9]", "");
+        
+        // If phone doesn't start with "1" and has 10 digits, add "1" prefix
+        if (!digitsOnly.startsWith("1") && digitsOnly.length() == 10) {
+            return "1" + digitsOnly;
+        }
+        
+        return phone;
+    }
+
+    /**
+     * Create Boomerangme customer for a Treez customer
+     * Returns true if customer was created successfully
+     */
+    private boolean createBoomerangmeCustomerForTreezCustomer(IntegrationConfig config, Customer treezCustomer) {
+        String treezCustomerId = treezCustomer.getExternalCustomerId();
+        
+        try {
+            // Prepare customer creation request
+            Map<String, Object> customerData = new HashMap<>();
+            
+            // Required: firstName
+            if (treezCustomer.getTreezFirstName() == null || treezCustomer.getTreezFirstName().isEmpty()) {
+                log.warn("Cannot create Boomerangme customer: first name is required for Treez customer {}", treezCustomerId);
+                return false;
+            }
+            customerData.put("firstName", treezCustomer.getTreezFirstName());
+            
+            // Required: phone OR email (at least one)
+            String phone = treezCustomer.getTreezPhone();
+            if (phone != null && !phone.isEmpty()) {
+                // Normalize phone for Boomerangme
+                String normalizedPhone = normalizePhoneForBoomerangme(phone);
+                customerData.put("phone", normalizedPhone);
+            }
+            
+            String email = treezCustomer.getTreezEmail();
+            if (email != null && !email.isEmpty()) {
+                customerData.put("email", email);
+            }
+            
+            // Optional fields
+            if (treezCustomer.getTreezLastName() != null && !treezCustomer.getTreezLastName().isEmpty()) {
+                customerData.put("surname", treezCustomer.getTreezLastName());
+            }
+            
+            if (treezCustomer.getTreezBirthDate() != null) {
+                customerData.put("dateOfBirth", treezCustomer.getTreezBirthDate().toString());
+            }
+            
+            // Set externalUserId to Treez customer ID
+            customerData.put("externalUserId", treezCustomerId);
+            
+            log.info("Creating Boomerangme customer for Treez customer {} (phone: {})", treezCustomerId, phone);
+            
+            // Call Boomerangme API to create customer
+            JsonNode customerResponse = boomerangmeApiClient.createCustomer(
+                    config.getBoomerangmeApiKey(),
+                    customerData
+            ).block();
+            
+            if (customerResponse != null) {
+                // Extract customer ID from response
+                String boomerangmeCustomerId = null;
+                if (customerResponse.has("data") && customerResponse.get("data").has("id")) {
+                    boomerangmeCustomerId = customerResponse.get("data").get("id").asText();
+                } else if (customerResponse.has("id")) {
+                    boomerangmeCustomerId = customerResponse.get("id").asText();
+                }
+                
+                if (boomerangmeCustomerId != null) {
+                    log.info("Successfully created Boomerangme customer {} for Treez customer {}", 
+                            boomerangmeCustomerId, treezCustomerId);
+                    log.info("NOTE: Customer must manually install card via link/QR code. Card will be linked when installed.");
+                    return true;
+                } else {
+                    log.error("Boomerangme customer creation response missing id field");
+                    return false;
+                }
+            } else {
+                log.error("Null response from Boomerangme API when creating customer");
+                return false;
+            }
+            
+        } catch (Exception e) {
+            log.error("Error creating Boomerangme customer for Treez customer {}: {}", 
+                    treezCustomerId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
      * Save card from Boomerangme API response
      * 
      * @param merchantId Merchant ID
@@ -162,6 +393,9 @@ public class InitialSyncService {
      * @return Saved Card entity or null if failed
      */
     private Card saveCardFromBoomerangmeResponse(String merchantId, JsonNode cardData) {
+        // Get config to access default_template_id
+        IntegrationConfig config = integrationConfigRepository.findByMerchantId(merchantId)
+                .orElseThrow(() -> new RuntimeException("Integration config not found for merchant: " + merchantId));
         try {
             // For list API response: id is the card serial number (e.g., "153111-927-114")
             // customerId is the cardholder_id (e.g., "019b1df3-a306-739e-988b-50dbfedc2922")
@@ -214,6 +448,7 @@ public class InitialSyncService {
                                 .merchantId(merchantId)
                                 .serialNumber(serialNumber)
                                 .cardholderId(cardholderId)
+                                .templateId(config.getDefaultTemplateId()) // Set default template
                                 .status("not_installed")
                                 .build();
                     }
@@ -221,13 +456,19 @@ public class InitialSyncService {
                     card = Card.builder()
                             .merchantId(merchantId)
                             .cardholderId(cardholderId)
+                            .templateId(config.getDefaultTemplateId()) // Set default template
                             .status("not_installed")
                             .build();
                 }
             }
             
             // Update card fields from API data
-            updateCardFromApiData(card, cardData);
+            updateCardFromApiData(card, cardData, config);
+            
+            // Ensure template exists before saving card (required for foreign key)
+            if (card.getTemplateId() != null) {
+                ensureTemplateExists(merchantId, card.getTemplateId(), config);
+            }
             
             card = cardRepository.save(card);
             String identifier = card.getSerialNumber() != null ? card.getSerialNumber() : cardholderId;
@@ -247,7 +488,7 @@ public class InitialSyncService {
      * Update Card entity from Boomerangme API data
      * Handles both list API format and webhook format
      */
-    private void updateCardFromApiData(Card card, JsonNode cardData) {
+    private void updateCardFromApiData(Card card, JsonNode cardData, IntegrationConfig config) {
         // Update serial number if present (list API uses "id", webhooks use "serial_number")
         if (cardData.has("id") && !cardData.get("id").isNull()) {
             card.setSerialNumber(cardData.get("id").asText());
@@ -262,10 +503,30 @@ public class InitialSyncService {
             card.setCardType(cardData.get("card_type").asText());
         }
         
+        // Set template_id from API data or use default from config
         if (cardData.has("templateId") && !cardData.get("templateId").isNull()) {
-            card.setTemplateId(String.valueOf(cardData.get("templateId").asInt()));
+            card.setTemplateId(cardData.get("templateId").asInt());
         } else if (cardData.has("template_id") && !cardData.get("template_id").isNull()) {
-            card.setTemplateId(cardData.get("template_id").asText());
+            try {
+                card.setTemplateId(cardData.get("template_id").asInt());
+            } catch (Exception e) {
+                log.warn("Could not parse template_id as integer: {}", cardData.get("template_id").asText());
+                // Fallback to default template from config
+                if (card.getTemplateId() == null && config != null && config.getDefaultTemplateId() != null) {
+                    card.setTemplateId(config.getDefaultTemplateId());
+                    log.info("Using default template {} for card {}", config.getDefaultTemplateId(), card.getCardholderId());
+                } else if (card.getTemplateId() == null) {
+                    throw new RuntimeException("Cannot set template_id: not in API response and no default_template_id in config for merchant: " + card.getMerchantId());
+                }
+            }
+        } else {
+            // No template_id in API response - use default from config
+            if (card.getTemplateId() == null && config != null && config.getDefaultTemplateId() != null) {
+                card.setTemplateId(config.getDefaultTemplateId());
+                log.info("Using default template {} for card {} (not in API response)", config.getDefaultTemplateId(), card.getCardholderId());
+            } else if (card.getTemplateId() == null) {
+                throw new RuntimeException("Cannot set template_id: not in API response and no default_template_id in config for merchant: " + card.getMerchantId());
+            }
         }
         
         // Update status
@@ -465,7 +726,7 @@ public class InitialSyncService {
     }
 
     /**
-     * Link card to Treez customer based on match type (email, phone, or both)
+     * Link card to Treez customer based on phone number
      * If customer not found in Treez, creates a new one
      * 
      * @param config Integration configuration
@@ -483,29 +744,14 @@ public class InitialSyncService {
         }
         
         try {
-            CustomerMatchType matchType = config.getCustomerMatchType() != null 
-                    ? config.getCustomerMatchType() 
-                    : CustomerMatchType.BOTH;
-            
-            // Validate we have required data for matching
-            if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
-                if (card.getCardholderEmail() == null || card.getCardholderEmail().isEmpty()) {
-                    log.debug("Card {} has no email for matching (match type: {}), skipping customer linking", 
-                            cardId, matchType);
-                    return false;
-                }
-            }
-            
-            if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
-                if (card.getCardholderPhone() == null || card.getCardholderPhone().isEmpty()) {
-                    log.debug("Card {} has no phone for matching (match type: {}), skipping customer linking", 
-                            cardId, matchType);
-                    return false;
-                }
+            // Validate we have required phone number for matching
+            if (card.getCardholderPhone() == null || card.getCardholderPhone().isEmpty()) {
+                log.debug("Card {} has no phone for matching, skipping customer linking", cardId);
+                return false;
             }
             
             // Check if customer already exists in local database
-            Customer existingCustomer = findExistingTreezCustomer(merchantId, card, matchType);
+            Customer existingCustomer = findExistingTreezCustomer(merchantId, card);
             
             if (existingCustomer != null) {
                 // Link card to existing customer
@@ -521,7 +767,7 @@ public class InitialSyncService {
                 }
             } else {
                 // Try to find customer in Treez POS
-                Customer treezCustomer = findCustomerInTreezPOS(config, card, matchType);
+                Customer treezCustomer = findCustomerInTreezPOS(config, card);
                 
                 if (treezCustomer != null) {
                     // Save customer with link to card
@@ -553,78 +799,28 @@ public class InitialSyncService {
     }
 
     /**
-     * Find existing Treez customer in local database
+     * Find existing Treez customer in local database by phone number
      */
-    private Customer findExistingTreezCustomer(String merchantId, Card card, CustomerMatchType matchType) {
-        if (matchType == CustomerMatchType.EMAIL || matchType == CustomerMatchType.BOTH) {
-            String email = card.getCardholderEmail();
-            if (email != null && !email.isEmpty()) {
-                Optional<Customer> byEmail = customerRepository.findByMerchantIdAndTreezEmailAndIntegrationType(
-                        merchantId, email, IntegrationType.TREEZ);
-                if (byEmail.isPresent()) {
-                    log.debug("Found existing Treez customer by email: {}", email);
-                    return byEmail.get();
-                }
-            }
-        }
-        
-        if (matchType == CustomerMatchType.PHONE || matchType == CustomerMatchType.BOTH) {
-            String phone = card.getCardholderPhone();
-            if (phone != null && !phone.isEmpty()) {
-                // Normalize phone from Boomerangme format (remove "1" prefix)
-                String normalizedPhone = normalizePhoneFromBoomerangme(phone);
-                
-                Optional<Customer> byPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
-                        merchantId, normalizedPhone, IntegrationType.TREEZ);
-                if (byPhone.isPresent()) {
-                    log.debug("Found existing Treez customer by phone: {}", normalizedPhone);
-                    return byPhone.get();
-                }
-                
-                // Also try original phone
-                if (!phone.equals(normalizedPhone)) {
-                    Optional<Customer> byOriginalPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
-                            merchantId, phone, IntegrationType.TREEZ);
-                    if (byOriginalPhone.isPresent()) {
-                        log.debug("Found existing Treez customer by original phone: {}", phone);
-                        return byOriginalPhone.get();
-                    }
-                }
-            }
-        } else if (matchType == CustomerMatchType.BOTH) {
-            // For BOTH, try to find by email first, then by phone
-            String email = card.getCardholderEmail();
-            String phone = card.getCardholderPhone();
+    private Customer findExistingTreezCustomer(String merchantId, Card card) {
+        String phone = card.getCardholderPhone();
+        if (phone != null && !phone.isEmpty()) {
+            // Normalize phone from Boomerangme format (remove "1" prefix)
+            String normalizedPhone = normalizePhoneFromBoomerangme(phone);
             
-            // Try email first
-            if (email != null && !email.isEmpty()) {
-                Optional<Customer> byEmail = customerRepository.findByMerchantIdAndTreezEmailAndIntegrationType(
-                        merchantId, email, IntegrationType.TREEZ);
-                if (byEmail.isPresent()) {
-                    log.debug("Found existing Treez customer by email: {}", email);
-                    return byEmail.get();
-                }
+            Optional<Customer> byPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
+                    merchantId, normalizedPhone, IntegrationType.TREEZ);
+            if (byPhone.isPresent()) {
+                log.debug("Found existing Treez customer by phone: {}", normalizedPhone);
+                return byPhone.get();
             }
             
-            // Try phone if email didn't match
-            if (phone != null && !phone.isEmpty()) {
-                String normalizedPhone = normalizePhoneFromBoomerangme(phone);
-                
-                Optional<Customer> byPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
-                        merchantId, normalizedPhone, IntegrationType.TREEZ);
-                if (byPhone.isPresent()) {
-                    log.debug("Found existing Treez customer by phone: {}", normalizedPhone);
-                    return byPhone.get();
-                }
-                
-                // Also try original phone
-                if (!phone.equals(normalizedPhone)) {
-                    Optional<Customer> byOriginalPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
-                            merchantId, phone, IntegrationType.TREEZ);
-                    if (byOriginalPhone.isPresent()) {
-                        log.debug("Found existing Treez customer by original phone: {}", phone);
-                        return byOriginalPhone.get();
-                    }
+            // Also try original phone
+            if (!phone.equals(normalizedPhone)) {
+                Optional<Customer> byOriginalPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
+                        merchantId, phone, IntegrationType.TREEZ);
+                if (byOriginalPhone.isPresent()) {
+                    log.debug("Found existing Treez customer by original phone: {}", phone);
+                    return byOriginalPhone.get();
                 }
             }
         }
@@ -633,62 +829,30 @@ public class InitialSyncService {
     }
 
     /**
-     * Find customer in Treez POS system
+     * Find customer in Treez POS system by phone number
      */
-    private Customer findCustomerInTreezPOS(IntegrationConfig config, Card card, 
-                                           CustomerMatchType matchType) {
+    private Customer findCustomerInTreezPOS(IntegrationConfig config, Card card) {
         try {
             if (config.getTreezApiKey() == null || config.getTreezDispensaryId() == null) {
                 log.warn("Treez API credentials not configured");
                 return null;
             }
             
-            JsonNode treezCustomerData = null;
-            
-            if (matchType == CustomerMatchType.EMAIL) {
-                String email = card.getCardholderEmail();
-                if (email != null && !email.isEmpty()) {
-                    treezCustomerData = treezApiClient.findCustomerByEmail(config, email).block();
-                }
-            } else if (matchType == CustomerMatchType.PHONE) {
-                String phone = card.getCardholderPhone();
-                if (phone != null && !phone.isEmpty()) {
-                    // Normalize phone for Treez API (10 digits, no "1" prefix)
-                    String normalizedPhone = normalizePhoneForTreez(phone);
-                    if (normalizedPhone != null && normalizedPhone.replaceAll("[^0-9]", "").length() == 10) {
-                        treezCustomerData = treezApiClient.findCustomerByPhone(
-                                config, normalizedPhone.replaceAll("[^0-9]", "")
-                        ).block();
-                    }
-                }
-            } else if (matchType == CustomerMatchType.BOTH) {
-                // For BOTH, try email first, then phone
-                String email = card.getCardholderEmail();
-                String phone = card.getCardholderPhone();
-                
-                // Try email first
-                if (email != null && !email.isEmpty()) {
-                    try {
-                        treezCustomerData = treezApiClient.findCustomerByEmail(config, email).block();
-                    } catch (Exception e) {
-                        log.debug("Customer not found by email, trying phone: {}", e.getMessage());
-                    }
-                }
-                
-                // If not found by email, try phone
-                if (treezCustomerData == null && phone != null && !phone.isEmpty()) {
-                    String normalizedPhone = normalizePhoneForTreez(phone);
-                    if (normalizedPhone != null && normalizedPhone.replaceAll("[^0-9]", "").length() == 10) {
-                        try {
-                            treezCustomerData = treezApiClient.findCustomerByPhone(
-                                    config, normalizedPhone.replaceAll("[^0-9]", "")
-                            ).block();
-                        } catch (Exception e) {
-                            log.debug("Customer not found by phone either: {}", e.getMessage());
-                        }
-                    }
-                }
+            String phone = card.getCardholderPhone();
+            if (phone == null || phone.isEmpty()) {
+                log.debug("Card has no phone number, cannot search Treez");
+                return null;
             }
+            
+            // Normalize phone for Treez API (10 digits, no "1" prefix)
+            String normalizedPhone = normalizePhoneForTreez(phone);
+            if (normalizedPhone == null || normalizedPhone.replaceAll("[^0-9]", "").length() != 10) {
+                log.warn("Phone number {} cannot be normalized to 10 digits for Treez search", phone);
+                return null;
+            }
+            
+            String phoneDigits = normalizedPhone.replaceAll("[^0-9]", "");
+            JsonNode treezCustomerData = treezApiClient.findCustomerByPhone(config, phoneDigits).block();
             
             if (treezCustomerData != null) {
                 // Check if response has data array (Treez wraps results in data array)
@@ -730,6 +894,8 @@ public class InitialSyncService {
         } catch (ApiException e) {
             if (e.getStatusCode() != 404) {
                 log.warn("Error finding customer in Treez POS: {} - {}", e.getStatusCode(), e.getResponseBody());
+            } else {
+                log.debug("Customer not found in Treez by phone: {}", card.getCardholderPhone());
             }
         } catch (Exception e) {
             log.warn("Error finding customer in Treez POS: {}", e.getMessage());
@@ -931,6 +1097,38 @@ public class InitialSyncService {
         } catch (Exception e) {
             log.error("Error creating Treez customer for card {}: {}", cardId, e.getMessage(), e);
             return null;
+        }
+    }
+
+    /**
+     * Ensure template exists in database before saving card.
+     * If template doesn't exist, fetch it from Boomerangme API.
+     * 
+     * @param merchantId Merchant ID
+     * @param templateId Template ID to check
+     * @param config Integration config (for API key)
+     */
+    private void ensureTemplateExists(String merchantId, Integer templateId, IntegrationConfig config) {
+        if (templateId == null) {
+            return;
+        }
+        
+        // Check if template already exists
+        if (templateRepository.findByTemplateId(templateId).isPresent()) {
+            log.debug("Template {} already exists in database", templateId);
+            return;
+        }
+        
+        // Template doesn't exist - fetch it from API
+        log.info("Template {} not found in database, fetching from Boomerangme API for merchant: {}", templateId, merchantId);
+        try {
+            templateService.syncTemplateFromApi(merchantId, templateId);
+            log.info("Template {} fetched and synced successfully", templateId);
+        } catch (Exception e) {
+            log.error("Failed to fetch template {} for merchant {}: {}", templateId, merchantId, e.getMessage(), e);
+            // Don't throw - let the card save fail with FK constraint error
+            // This provides better error message
+            throw new RuntimeException("Template " + templateId + " does not exist and could not be fetched from Boomerangme API: " + e.getMessage(), e);
         }
     }
 }
