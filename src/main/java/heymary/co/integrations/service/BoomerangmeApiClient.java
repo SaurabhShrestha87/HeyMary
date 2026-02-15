@@ -382,10 +382,60 @@ public class BoomerangmeApiClient {
     }
 
     /**
-     * Subtract scores (points) from card - For redemptions or reversals
+     * Receive reward - Redeem a reward by ID (replaces manual point subtraction)
+     * POST /api/v2/cards/{cardId}/receive-reward
+     * 
+     * Applicable to Reward card (card ID 7). The API handles point deduction internally.
+     * 
+     * @param apiKey Boomerangme API key
+     * @param cardId Card serial number (e.g., "765083-914-166")
+     * @param rewardId Boomerangme reward tier ID being redeemed
+     * @param purchaseSum Order/purchase total amount
+     * @param comment Optional comment for the redemption
+     * @return JsonNode with API response
+     */
+    public Mono<JsonNode> receiveReward(String apiKey, String cardId, Integer rewardId, BigDecimal purchaseSum, String comment) {
+        log.info("Redeeming reward {} on card {} with purchaseSum={}, comment: {}", rewardId, cardId, purchaseSum, comment);
+        
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("id", rewardId);
+        requestBody.put("purchaseSum", purchaseSum != null ? purchaseSum.doubleValue() : 0);
+        requestBody.put("comment", comment != null ? comment : "");
+
+        return webClient.post()
+                .uri("/api/v2/cards/{cardId}/receive-reward", cardId)
+                .header("X-API-Key", apiKey)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .bodyValue(requestBody)
+                .retrieve()
+                .onStatus(status -> status.isError(), response -> {
+                    return response.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                log.error("Boomerangme API error receiving reward: {} - {}", response.statusCode(), body);
+                                return Mono.error(new ApiException(
+                                    "Failed to receive reward: " + response.statusCode(),
+                                    response.statusCode().value(),
+                                    body
+                                ));
+                            });
+                })
+                .bodyToMono(JsonNode.class)
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof ApiException apiEx && 
+                                (apiEx.getStatusCode() >= 500 || apiEx.getStatusCode() == 0))
+                        .doBeforeRetry(retrySignal -> 
+                            log.warn("Retrying receive reward, attempt: {}", retrySignal.totalRetries() + 1))
+                )
+                .doOnSuccess(response -> log.info("Successfully redeemed reward {} on card {}", rewardId, cardId))
+                .doOnError(error -> log.error("Error redeeming reward {} on card {}: {}", rewardId, cardId, error.getMessage()));
+    }
+
+    /**
+     * Subtract scores (points) from card - For refunds (removing earned points)
      * POST /api/v2/cards/{serialNumber}/subtract-scores
      * 
-     * Applies to Reward cards (card ID 7) with Points mechanics
+     * Use {@link #receiveReward} for reward redemptions instead. This method is used for
+     * refund processing when removing previously earned points.
      * 
      * @param apiKey Boomerangme API key
      * @param serialNumber Card serial number

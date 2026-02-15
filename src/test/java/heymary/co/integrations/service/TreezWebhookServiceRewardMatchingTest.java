@@ -414,13 +414,14 @@ class TreezWebhookServiceRewardMatchingTest {
     }
 
     /**
-     * Helper method to invoke private extractHMRedeemDiscountPoints method via reflection
+     * Helper method to invoke private extractHMRedeemDiscounts method via reflection
      */
     private int invokeExtractHMRedeemDiscountPoints(JsonNode data, Integer templateId) throws Exception {
         Method method = TreezWebhookService.class.getDeclaredMethod(
-                "extractHMRedeemDiscountPoints", JsonNode.class, Integer.class);
+                "extractHMRedeemDiscounts", JsonNode.class, Integer.class);
         method.setAccessible(true);
-        return (int) method.invoke(treezWebhookService, data, templateId);
+        Object result = method.invoke(treezWebhookService, data, templateId);
+        return (int) result.getClass().getMethod("totalPoints").invoke(result);
     }
 
     /**

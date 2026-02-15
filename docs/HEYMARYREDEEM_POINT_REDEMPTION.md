@@ -95,7 +95,7 @@ Has HEYMARYREDEEM? → YES → Redemption Order
     |              ↓
     |         pointsToSync = -heymaryredeemDiscountPoints
     |         Don't earn any points
-    |         Call subtractScoresFromCard()
+    |         Call receiveReward() for each matched tier
     |
     NO → Normal Order
         ↓
@@ -123,15 +123,21 @@ boomerangmeApiClient.addScoresToCard(
 )
 ```
 
-**Redemption Orders:**
+**Redemption Orders (receive-reward API):**
 ```java
-boomerangmeApiClient.subtractScoresFromCard(
-    apiKey,
-    cardId,
-    heymaryredeemDiscountPoints,  // Positive integer (absolute value)
-    redemptionReason              // "Points redeemed! Order #... - $X.XX discount applied..."
-)
+// Calls receive-reward API for each matched reward tier (replaces manual point subtraction)
+for (RewardTier tier : matchedTiers) {
+    boomerangmeApiClient.receiveReward(
+        apiKey,
+        cardId,
+        tier.getTierId(),    // Boomerangme reward tier ID (e.g. 898627)
+        orderTotal,          // Purchase amount
+        redemptionComment
+    );
+}
 ```
+
+The `receive-reward` API (`POST /api/v2/cards/{cardId}/receive-reward`) handles point deduction internally. Request body: `{ "id": rewardId, "purchaseSum": 50, "comment": "..." }`.
 
 ### 4. Database Schema
 
@@ -180,12 +186,12 @@ sequenceDiagram
     WH->>WH: Extract order data
     WH->>WH: extractHeyMaryRedeemDiscountPoints()
     
-    alt Has HEYMARYREDEEM discount
+    alt Has HM redemption discount (matched to reward tier)
         WH->>WH: isRedemptionOrder = true
-        WH->>WH: pointsToSync = -41
-        WH->>BME: subtractScoresFromCard(41)
-        BME-->>WH: Success (new balance)
-        WH->>DB: Save order (pointsEarned = -41)
+        WH->>WH: pointsToSync = -redemptionPoints
+        WH->>BME: receiveReward(rewardId, purchaseSum, comment)
+        BME-->>WH: Success (API handles point deduction)
+        WH->>DB: Save order (pointsEarned = -redemptionPoints)
     else No HEYMARYREDEEM discount
         WH->>WH: isRedemptionOrder = false
         WH->>WH: pointsToSync = 80
@@ -220,7 +226,7 @@ sequenceDiagram
 
 **Expected Result:**
 - Points redeemed: 41
-- Boomerangme API: `subtractScoresFromCard(41)`
+- Boomerangme API: `receiveReward(rewardId, purchaseSum, comment)`
 - Database: `pointsEarned = -41`
 - Log: "Successfully synced Treez redemption transaction ... - 41 points redeemed"
 
@@ -234,7 +240,7 @@ sequenceDiagram
 
 **Expected Result:**
 - Points redeemed: 41 (sum of all HEYMARYREDEEM discounts)
-- Boomerangme API: `subtractScoresFromCard(41)`
+- Boomerangme API: `receiveReward(rewardId, purchaseSum, comment)`
 - Database: `pointsEarned = -41`
 
 ### Test 4: Mixed Discount Types
@@ -296,7 +302,7 @@ INFO  - Extracted 1 HEYMARYREDEEM discount(s) totaling $41.0 (41 points)
 INFO  - Order abc12345-6789-4def-90gh-ijklmnopqrst is a HEYMARYREDEEM redemption order - deducting 41 points
 INFO  - Found customer 2162 with Boomerangme card 153111-927-114
 INFO  - Saved order abc12345-6789-4def-90gh-ijklmnopqrst to database with 41 points (redeemed)
-INFO  - Subtracting 41 points from Boomerangme card 153111-927-114 for order abc12345-6789-4def-90gh-ijklmnopqrst
+INFO  - Redeeming 1 reward(s) on Boomerangme card 153111-927-114 for order abc12345-6789-4def-90gh-ijklmnopqrst via receive-reward API
 INFO  - Successfully redeemed 41 points from Boomerangme for order abc12345-6789-4def-90gh-ijklmnopqrst
 INFO  - Successfully synced Treez redemption transaction abc12345-6789-4def-90gh-ijklmnopqrst - 41 points redeemed
 ```
@@ -315,7 +321,7 @@ INFO  - Successfully synced Treez redemption transaction abc12345-6789-4def-90gh
 
 6. **Idempotency:** Existing duplicate prevention still works (checks `pointsSynced` flag)
 
-7. **API Method Ready:** `subtractScoresFromCard` was already implemented and ready to use
+7. **receive-reward API:** Redemptions use `receiveReward(rewardId, purchaseSum, comment)` instead of manual point subtraction. The Boomerangme API handles point deduction internally.
 
 ## Configuration
 
@@ -377,4 +383,5 @@ Potential improvements for future versions:
 
 ## Version History
 
-- **v1.0** (Jan 2026): Initial implementation with HEYMARYREDEEM discount detection
+- **v1.1** (Feb 2026): Switched from `subtractScoresFromCard` to `receive-reward` API. Redemptions now call `POST /api/v2/cards/{cardId}/receive-reward` with reward tier ID, purchase sum, and comment. The API handles point deduction internally.
+- **v1.0** (Jan 2026): Initial implementation with HM discount title matching to reward tiers

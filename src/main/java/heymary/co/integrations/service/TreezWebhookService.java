@@ -24,15 +24,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.dao.DataIntegrityViolationException;
 
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Service for processing Treez webhook events
@@ -344,13 +348,17 @@ public class TreezWebhookService {
             log.info("Found customer {} with Boomerangme card {}", customerId, cardIdentifier);
             
             // Check if this is a redemption order (HM prefix discount matching reward tiers)
+            HMRedeemResult redeemResult = null;
             Card card = customer.getCard();
             if (card.getTemplateId() != null) {
-                redemptionPoints = extractHMRedeemDiscountPoints(data, card.getTemplateId());
+                redeemResult = extractHMRedeemDiscounts(data, card.getTemplateId());
+                redemptionPoints = redeemResult.totalPoints();
                 isRedemptionOrder = redemptionPoints > 0;
                 if (isRedemptionOrder) {
-                    log.info("Order {} is a HM redemption order - deducting {} points (matched reward tier)", 
-                             ticketId, redemptionPoints);
+                    pointsToSync = -redemptionPoints;
+                    pointsAction = "redeemed";
+                    log.info("Order {} is a HM redemption order - {} reward(s) totaling {} points", 
+                             ticketId, redeemResult.matchedTiers().size(), redemptionPoints);
                 }
             } else {
                 log.warn("Card {} has no template ID, cannot check for HM redemption discounts", cardIdentifier);
@@ -397,21 +405,24 @@ public class TreezWebhookService {
                     ? customer.getCard().getSerialNumber() 
                     : customer.getCard().getCardholderId();
             
-            JsonNode boomerangmeResponse;
+            JsonNode boomerangmeResponse = null;
             
-            if (isRedemptionOrder) {
-                // Subtract points for redemption
-                String redemptionReason = buildRedemptionReasonMessage(ticketId, orderTotal, redemptionPoints, orderDate);
-                log.info("Subtracting {} points from Boomerangme card {} for order {}", 
-                         redemptionPoints, cardIdForApi, ticketId);
+            if (isRedemptionOrder && redeemResult != null && !redeemResult.matchedTiers().isEmpty()) {
+                // Call receive-reward API for each matched reward (replaces manual point subtraction)
+                String redemptionComment = buildRedemptionReasonMessage(ticketId, orderTotal, redemptionPoints, orderDate);
+                log.info("Redeeming {} reward(s) on Boomerangme card {} for order {} via receive-reward API", 
+                         redeemResult.matchedTiers().size(), cardIdForApi, ticketId);
                 
-                boomerangmeResponse = boomerangmeApiClient.subtractScoresFromCard(
-                        config.getBoomerangmeApiKey(),
-                        cardIdForApi,
-                        redemptionPoints,  // Positive number
-                        redemptionReason
-                ).block();
-            } else {
+                for (RewardTier tier : redeemResult.matchedTiers()) {
+                    boomerangmeResponse = boomerangmeApiClient.receiveReward(
+                            config.getBoomerangmeApiKey(),
+                            cardIdForApi,
+                            tier.getTierId(),
+                            orderTotal,
+                            redemptionComment
+                    ).block();
+                }
+            } else if (!isRedemptionOrder) {
                 // Add points normally
                 String earnReason = buildPointsReasonMessage(ticketId, orderTotal, pointsToSync, orderDate);
                 log.info("Adding {} points to Boomerangme card {} for order {}", 
@@ -426,7 +437,10 @@ public class TreezWebhookService {
                 ).block();
             }
             
-            if (boomerangmeResponse == null) {
+            if (isRedemptionOrder && (redeemResult == null || redeemResult.matchedTiers().isEmpty())) {
+                throw new RuntimeException("Redemption order but no matched reward tiers - cannot call receive-reward API");
+            }
+            if (!isRedemptionOrder && boomerangmeResponse == null) {
                 throw new RuntimeException("Null response from Boomerangme API");
             }
             
@@ -551,8 +565,9 @@ public class TreezWebhookService {
     }
 
     /**
-     * Process REFUND event: Remove points from Boomerangme for orders that EARNED points.
-     * For orders that REDEEMED points: we do NOT give points back to the customer.
+     * Process REFUND event: Remove points from Boomerangme for any refunded order.
+     * Points to remove = order total (1:1 points per dollar), with comment "Points deducted due to refund of order #xxx".
+     * Applies to both earned and redeemed orders - we take back the points they earned. We do not restore points they used.
      * 
      * Treez sends refund as a separate ticket with:
      * - payment_status: REFUNDED
@@ -598,20 +613,18 @@ public class TreezWebhookService {
             }
             
             Order originalOrder = originalOrderOpt.get();
-            int pointsEarned = originalOrder.getPointsEarned() != null ? originalOrder.getPointsEarned() : 0;
             
-            // REDEEMED orders (pointsEarned < 0): we do NOT give points back to the customer
-            if (pointsEarned <= 0) {
-                log.info("Refund {} for original order {} - order had redeemed points ({}), not giving points back", 
-                        refundTicketId, originalTicketId, pointsEarned);
+            // Remove points based on order total (1:1 points per dollar) - applies to all refunds
+            int pointsToRemove = calculatePoints(originalOrder.getOrderTotal());
+            if (pointsToRemove <= 0) {
+                log.info("Refund {} for original order {} - order total yields no points to remove, skipping", 
+                        refundTicketId, originalTicketId);
                 createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
                         SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
-                        String.format("{\"status\":\"skipped\",\"message\":\"Redeemed order - points not restored\",\"original_order\":\"%s\",\"points_earned\":%d}", 
-                                originalTicketId, pointsEarned));
+                        String.format("{\"status\":\"skipped\",\"message\":\"No points to remove\",\"original_order\":\"%s\"}", originalTicketId));
                 return;
             }
             
-            // EARNED order: remove points from Boomerangme
             Customer customer = originalOrder.getCustomer();
             if (customer == null || customer.getCard() == null) {
                 log.warn("Refund {} - customer or card not found for original order {}, skipping", 
@@ -625,17 +638,16 @@ public class TreezWebhookService {
                     ? customer.getCard().getSerialNumber() 
                     : customer.getCard().getCardholderId();
             
-            String refundReason = String.format("Refund for order #%s - %d points removed", 
-                    originalTicketId.length() > 8 ? originalTicketId.substring(0, 8) : originalTicketId, 
-                    pointsEarned);
+            String orderRef = originalTicketId.length() > 8 ? originalTicketId.substring(0, 8) : originalTicketId;
+            String refundReason = String.format("Points deducted due to refund of order #%s", orderRef);
             
-            log.info("Removing {} points from Boomerangme card {} for refund {} (original order {})", 
-                    pointsEarned, cardIdForApi, refundTicketId, originalTicketId);
+            log.info("Removing {} points from Boomerangme card {} for refund {} (original order {}, total ${})", 
+                    pointsToRemove, cardIdForApi, refundTicketId, originalTicketId, originalOrder.getOrderTotal());
             
             JsonNode boomerangmeResponse = boomerangmeApiClient.subtractScoresFromCard(
                     config.getBoomerangmeApiKey(),
                     cardIdForApi,
-                    pointsEarned,
+                    pointsToRemove,
                     refundReason
             ).block();
             
@@ -644,12 +656,12 @@ public class TreezWebhookService {
             }
             
             log.info("Successfully removed {} points from Boomerangme for refund {} (original order {})", 
-                    pointsEarned, refundTicketId, originalTicketId);
+                    pointsToRemove, refundTicketId, originalTicketId);
             
             createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
                     SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
-                    String.format("{\"status\":\"success\",\"points_removed\":%d,\"original_order\":\"%s\"}", 
-                            pointsEarned, originalTicketId));
+                    String.format("{\"status\":\"success\",\"points_removed\":%d,\"original_order\":\"%s\",\"order_total\":%.2f}", 
+                            pointsToRemove, originalTicketId, originalOrder.getOrderTotal()));
             
         } catch (Exception e) {
             log.error("Error processing Treez REFUND event for merchant: {}, refund: {}: {}", 
@@ -1784,60 +1796,48 @@ public class TreezWebhookService {
     }
 
     /**
-     * Extract HM redemption discount points from order data by matching discount titles to reward tiers
-     * Checks for discounts with titles starting with "HM" prefix
-     * Extracts the remaining part after "HM" and matches it against reward tiers from the card's template
-     * Returns the THRESHOLD points (points required to unlock the reward) from the matched reward tier
+     * Result of HM redemption extraction - contains total points and matched reward tiers for receive-reward API.
+     */
+    private record HMRedeemResult(int totalPoints, List<RewardTier> matchedTiers) {}
+
+    /**
+     * Extract HM redemption discounts from order data by matching discount titles to reward tiers.
+     * Uses only {@code item.discounts} (not POS_discounts) - both contain the same HM discounts.
      * 
-     * Important: Uses tier.getThreshold() (points cost), NOT tier.getValue() (reward amount)
-     * 
-     * Example:
-     * - Discount: "HM 10$ off"
-     * - Matches reward tier: "10$ off" with threshold=50, value=10.00
-     * - Returns: 50 points (threshold), not 10 (value)
-     * 
-     * Treez webhook structure:
-     * - data.items[] - array of order items
-     * - data.items[].discounts[] - array of discounts applied to each item
-     * - discount object has: discount_title (e.g., "HM 10$ off")
+     * Handles two discount types:
+     * - Line item discount (cart: false): discount applied to specific item(s). Each matched discount = 1 reward.
+     * - Cart discount (cart: true): discount split across items. Same discount instance (same "id") appears on
+     *   multiple items - deduplicate by "id" so we count 1 reward.
      * 
      * @param data Order/ticket data from Treez webhook
      * @param templateId Template ID from the customer's card
-     * @return Total redemption points (threshold values) from matched reward tiers, or 0 if no matches found
+     * @return HMRedeemResult with totalPoints and matchedTiers, or empty result if no matches
      */
-    private int extractHMRedeemDiscountPoints(JsonNode data, Integer templateId) {
-        int totalRedemptionPoints = 0;
-        int matchedDiscountCount = 0;
+    private HMRedeemResult extractHMRedeemDiscounts(JsonNode data, Integer templateId) {
+        List<RewardTier> matchedTiers = new ArrayList<>();
+        Set<String> processedInstanceIds = new HashSet<>();
         
         try {
-            // Check if items array exists
             if (!data.has("items") || !data.get("items").isArray()) {
                 log.debug("No items array found in order data");
-                return 0;
+                return new HMRedeemResult(0, matchedTiers);
             }
             
-            // Get all reward tiers for this template
             List<RewardTier> rewardTiers = rewardTierRepository.findByTemplateId(templateId);
             if (rewardTiers.isEmpty()) {
                 log.debug("No reward tiers found for template {}", templateId);
-                return 0;
+                return new HMRedeemResult(0, matchedTiers);
             }
             
             log.debug("Found {} reward tiers for template {}", rewardTiers.size(), templateId);
-            
             JsonNode items = data.get("items");
             
-            // Iterate through each item
             for (JsonNode item : items) {
                 if (!item.has("discounts") || !item.get("discounts").isArray()) {
                     continue;
                 }
                 
-                JsonNode discounts = item.get("discounts");
-                
-                // Iterate through each discount on this item
-                for (JsonNode discount : discounts) {
-                    // Check if discount has a title starting with "HM"
+                for (JsonNode discount : item.get("discounts")) {
                     String discountTitle = null;
                     if (discount.has("discount_title") && !discount.get("discount_title").isNull()) {
                         discountTitle = discount.get("discount_title").asText();
@@ -1847,40 +1847,43 @@ public class TreezWebhookService {
                         continue;
                     }
                     
-                    // Use utility method to find matching reward tier
+                    // Deduplicate by instance "id": cart discounts (cart:true) share same id across items
+                    String instanceId = discount.has("id") && !discount.get("id").isNull()
+                            ? discount.get("id").asText()
+                            : null;
+                    if (instanceId != null && processedInstanceIds.contains(instanceId)) {
+                        continue; // Cart discount - same instance on multiple items, already counted
+                    }
+                    
                     Optional<RewardTier> matchedTier = RewardTierMatcher.findMatchingRewardTier(discountTitle, rewardTiers);
                     
                     if (matchedTier.isPresent()) {
                         RewardTier tier = matchedTier.get();
-                        // Use threshold (points required to unlock), NOT value (reward amount)
                         int thresholdPoints = tier.getThreshold();
-                        totalRedemptionPoints += thresholdPoints;
-                        matchedDiscountCount++;
-                        
-                        log.info("Matched HM discount '{}' to reward tier '{}' - deducting {} points (threshold, not value)", 
-                                discountTitle, tier.getName(), thresholdPoints);
-                    } else {
-                        // Only log if it starts with HM (to avoid spam for non-HM discounts)
-                        if (discountTitle.toUpperCase().trim().startsWith("HM")) {
-                            log.warn("HM discount '{}' does not match any reward tier for template {}", 
-                                    discountTitle, templateId);
+                        matchedTiers.add(tier);
+                        if (instanceId != null) {
+                            processedInstanceIds.add(instanceId);
                         }
+                        
+                        log.info("Matched HM discount '{}' to reward tier '{}' (id={}) - {} points", 
+                                discountTitle, tier.getName(), tier.getTierId(), thresholdPoints);
+                    } else if (discountTitle.toUpperCase().trim().startsWith("HM")) {
+                        log.warn("HM discount '{}' does not match any reward tier for template {}", 
+                                discountTitle, templateId);
                     }
                 }
             }
             
-            if (matchedDiscountCount > 0) {
+            int totalPoints = matchedTiers.stream().mapToInt(RewardTier::getThreshold).sum();
+            if (!matchedTiers.isEmpty()) {
                 log.info("Extracted {} HM redemption discount(s) totaling {} points from template {}", 
-                         matchedDiscountCount, totalRedemptionPoints, templateId);
-                return totalRedemptionPoints;
-            } else {
-                log.debug("No HM redemption discounts found in order");
-                return 0;
+                         matchedTiers.size(), totalPoints, templateId);
             }
+            return new HMRedeemResult(totalPoints, matchedTiers);
             
         } catch (Exception e) {
             log.error("Error extracting HM redemption discounts: {}", e.getMessage(), e);
-            return 0;
+            return new HMRedeemResult(0, List.of());
         }
     }
 
