@@ -156,6 +156,13 @@ public class BoomerangmeWebhookController {
                     log.info("Card installed event processed successfully");
                     break;
                 
+                // Card Uninstalled/Deleted Event - Remove from HEYMARY_LOYALTY group in Treez
+                case "CardRemovedEvent":
+                    log.info("ACTION: Processing CardRemovedEvent - Removing from Treez loyalty group");
+                    customerSyncService.processCardRemoved(config, cardData);
+                    log.info("Card removed event processed successfully");
+                    break;
+                
                 // Customer Card Events - These should trigger customer sync to POS
                 case "card.created":
                 case "card.updated":

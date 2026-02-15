@@ -72,6 +72,99 @@ public class TreezApiClient {
     }
 
     /**
+     * Update an existing customer in Treez POS (e.g. customer_groups, notes)
+     * PATCH /v2.0/dispensary/{dispensaryId}/customer/update/{customerId}
+     */
+    public Mono<JsonNode> updateCustomer(heymary.co.integrations.model.IntegrationConfig config,
+                                        String customerId, Map<String, Object> customerData) {
+        log.debug("Updating Treez customer {} with fields: {}", customerId, customerData.keySet());
+
+        String accessToken = tokenService.getAccessToken(config);
+        String clientId = config.getTreezClientId();
+        String dispensaryId = config.getTreezDispensaryId();
+
+        return webClient.patch()
+                .uri("/v2.0/dispensary/{dispensaryId}/customer/update/{customerId}", dispensaryId, customerId)
+                .header(HttpHeaders.AUTHORIZATION, accessToken)
+                .header("client_id", clientId)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .bodyValue(customerData)
+                .retrieve()
+                .onStatus(status -> status.isError(), response -> {
+                    return response.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                log.error("Treez API error updating customer: {} - {}", response.statusCode(), body);
+                                return Mono.error(new ApiException(
+                                        "Failed to update customer: " + response.statusCode(),
+                                        response.statusCode().value(),
+                                        body
+                                ));
+                            });
+                })
+                .bodyToMono(JsonNode.class)
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof ApiException apiEx &&
+                                (apiEx.getStatusCode() >= 500 || apiEx.getStatusCode() == 0))
+                )
+                .doOnSuccess(response -> log.debug("Successfully updated Treez customer {}", customerId))
+                .doOnError(error -> log.error("Error updating Treez customer {}: {}", customerId, error.getMessage()));
+    }
+
+    /**
+     * Get customer by ID in Treez
+     * GET /v2.0/dispensary/{dispensaryId}/customer/{customerId}
+     *
+     * @param config     Integration configuration (used to get token)
+     * @param customerId Treez customer ID
+     * @return JsonNode with customer details (may be wrapped in data array)
+     */
+    public Mono<JsonNode> getCustomer(heymary.co.integrations.model.IntegrationConfig config, String customerId) {
+        log.debug("Fetching Treez customer by ID: {}", customerId);
+
+        String accessToken = tokenService.getAccessToken(config);
+        String clientId = config.getTreezClientId();
+        String dispensaryId = config.getTreezDispensaryId();
+
+        return webClient.get()
+                .uri("/v2.0/dispensary/{dispensaryId}/customer/{customerId}", dispensaryId, customerId)
+                .header(HttpHeaders.AUTHORIZATION, accessToken)
+                .header("client_id", clientId)
+                .retrieve()
+                .onStatus(status -> status.isError(), response -> {
+                    return response.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                if (response.statusCode().value() == 404) {
+                                    log.debug("Treez customer not found by ID: {}", customerId);
+                                    return Mono.error(new ApiException(
+                                            "Customer not found",
+                                            response.statusCode().value(),
+                                            body
+                                    ));
+                                }
+                                log.error("Treez API error fetching customer: {} - {}", response.statusCode(), body);
+                                return Mono.error(new ApiException(
+                                        "Failed to fetch customer: " + response.statusCode(),
+                                        response.statusCode().value(),
+                                        body
+                                ));
+                            });
+                })
+                .bodyToMono(JsonNode.class)
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof ApiException apiEx &&
+                                (apiEx.getStatusCode() >= 500 || apiEx.getStatusCode() == 0))
+                )
+                .doOnSuccess(response -> log.debug("Successfully fetched Treez customer {}", customerId))
+                .doOnError(error -> {
+                    if (error instanceof ApiException apiEx && apiEx.getStatusCode() == 404) {
+                        log.debug("Treez customer not found by ID: {}", customerId);
+                    } else {
+                        log.error("Error fetching Treez customer {}: {}", customerId, error.getMessage());
+                    }
+                });
+    }
+
+    /**
      * Find customer by phone number in Treez
      * GET /v2.0/dispensary/{dispensaryId}/customer/phone/{phone}
      * 

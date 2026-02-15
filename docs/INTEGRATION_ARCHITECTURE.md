@@ -14,6 +14,7 @@ This document describes the multi-POS integration architecture that supports bot
          │
          │ CardIssuedEvent
          │ CardInstalledEvent
+         │ CardRemovedEvent
          │ CardUpdatedEvent
          ▼
 ┌──────────────────────────────┐
@@ -161,30 +162,42 @@ Triggered when customer installs the card on their device (Apple Wallet, Google 
    - If **DUTCHIE**: Call `syncCustomerToDutchie()`
 4. Create or link `Customer` record
 5. Establish one-to-one relationship between `Card` and `Customer`
+6. **Treez:** Add customer to `HEYMARY_LOYALTY` group via PATCH
+
+### Event 3: CardRemovedEvent
+
+Triggered when customer removes/uninstalls the card from their device.
+
+**Payload Example:**
+```json
+{
+  "event": "CardRemovedEvent",
+  "data": {
+    "cardholder_id": "01981ee3-9a17-70fa-b90d-66109e6d9dae",
+    "serial_number": "452159-632-730"
+  }
+}
+```
+
+**Processing:**
+1. Update `Card` record to "not_installed" status
+2. Unlink `Card` from `Customer` (set `customer.card_id` to null)
+3. **Treez:** PATCH customer to remove from `HEYMARY_LOYALTY` group
 
 ## Integration-Specific Logic
 
 ### Treez Integration
 
-**Status:** 🚧 Partially Implemented (TODO: Complete Treez API integration)
+**Status:** ✅ Implemented
 
 **Method:** `CustomerSyncService.syncCustomerToTreez()`
 
 **Current Behavior:**
-1. Check if customer exists by email
-2. If exists: Link card to existing customer
-3. If not exists:
-   - ⚠️ **TODO**: Call Treez API to create customer
-   - Create local `Customer` record
-   - Set `integrationType = TREEZ`
-   - Link to `Card`
-
-**What Needs Implementation:**
-- Treez API client
-- Treez customer creation endpoint call
-- Treez customer update endpoint call
-- Error handling for Treez API
-- Treez-specific field mapping
+1. Check if customer exists by phone (Treez format)
+2. If exists: Link card to existing customer, PATCH to add `HEYMARY_LOYALTY` group
+3. If not exists: Create customer via Treez API with `customer_groups: ["HEYMARY_LOYALTY"]`
+4. **Card installed:** Customer added to `HEYMARY_LOYALTY` group via PATCH
+5. **Card removed:** `processCardRemoved()` PATCHes to remove from `HEYMARY_LOYALTY` group
 
 **Configuration Required:**
 - `treezApiKey` - API key for Treez
@@ -396,7 +409,6 @@ WHERE merchant_id = 'your_merchant_id';
 
 ### Low Priority
 - [ ] Remove deprecated fields (`external_customer_id`, `boomerangme_card_id`)
-- [ ] Add more card event types (updated, deleted)
 - [ ] Add customer opt-out handling
 - [ ] Add reward redemption events
 
@@ -409,7 +421,8 @@ WHERE merchant_id = 'your_merchant_id';
 **Supported Events:**
 - `CardIssuedEvent` - Card created/issued
 - `CardInstalledEvent` - Card installed on device
-- `card.updated` - Card information updated
+- `CardRemovedEvent` / `card.removed` - Card removed/uninstalled (Treez: remove from HEYMARY_LOYALTY group)
+- `card.created` / `card.updated` - Card information updated
 - `points.updated` - Points balance changed
 - `UserTemplateUpdatedEvent` - Template/design updated (no sync)
 
@@ -418,7 +431,8 @@ WHERE merchant_id = 'your_merchant_id';
 **Methods:**
 - `processCardIssued(config, webhookData)` - Handle card issued event
 - `processCardInstalled(config, webhookData)` - Handle card installed event
-- `syncCustomerToTreez(config, card)` - Sync customer to Treez POS
+- `processCardRemoved(config, webhookData)` - Handle card removed event (Treez: remove from HEYMARY_LOYALTY group)
+- `syncCustomerToTreez(config, card)` - Sync customer to Treez POS (add to HEYMARY_LOYALTY group)
 - `syncCustomerToDutchie(config, card)` - Sync customer to Dutchie POS
 - `syncCustomerFromBoomerangme(merchantId, cardData)` - Legacy sync method
 

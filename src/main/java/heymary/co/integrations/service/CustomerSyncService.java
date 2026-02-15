@@ -11,17 +11,23 @@ import heymary.co.integrations.model.SyncLog;
 import heymary.co.integrations.repository.CardRepository;
 import heymary.co.integrations.repository.CustomerRepository;
 import heymary.co.integrations.repository.IntegrationConfigRepository;
+import heymary.co.integrations.repository.RewardTierRepository;
 import heymary.co.integrations.repository.SyncLogRepository;
+import heymary.co.integrations.util.CustomerNotesHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import heymary.co.integrations.model.RewardTier;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -37,6 +43,7 @@ public class CustomerSyncService {
     private final CardRepository cardRepository;
     private final IntegrationConfigRepository integrationConfigRepository;
     private final SyncLogRepository syncLogRepository;
+    private final RewardTierRepository rewardTierRepository;
     private final ObjectMapper objectMapper;
     private final DeadLetterQueueService deadLetterQueueService;
 
@@ -498,6 +505,57 @@ public class CustomerSyncService {
     }
 
     /**
+     * Process CardUninstalledEvent / card.deleted from Boomerangme
+     * Customer uninstalled the card - remove from HEYMARY_LOYALTY group in Treez
+     */
+    @Async("syncTaskExecutor")
+    @Transactional
+    public void processCardRemoved(IntegrationConfig config, JsonNode webhookData) {
+        String merchantId = config.getMerchantId();
+        if (config.getIntegrationType() != IntegrationType.TREEZ) {
+            log.debug("Card removed - Treez group sync only applies to Treez integration");
+            return;
+        }
+        
+        try {
+            JsonNode cardData = webhookData.has("data") ? webhookData.get("data") : webhookData;
+            String cardholderId = cardData.has("cardholder_id") && !cardData.get("cardholder_id").isNull()
+                    ? cardData.get("cardholder_id").asText()
+                    : null;
+            if (cardholderId == null) {
+                log.warn("Card removed event missing cardholder_id");
+                return;
+            }
+            
+            Optional<Card> cardOpt = cardRepository.findByCardholderId(cardholderId);
+            if (cardOpt.isEmpty()) {
+                log.info("Card {} not found locally, nothing to sync", cardholderId);
+                return;
+            }
+            
+            Card card = cardOpt.get();
+            card.setStatus("not_installed");
+            cardRepository.save(card);
+            
+            Optional<Customer> customerOpt = customerRepository.findByCardId(card.getId());
+            if (customerOpt.isEmpty() || customerOpt.get().getExternalCustomerId() == null) {
+                log.info("No Treez customer linked to card {}, nothing to update", cardholderId);
+                return;
+            }
+            
+            Customer customer = customerOpt.get();
+            customer.setCard(null);
+            customerRepository.save(customer);
+            
+            syncTreezCustomerGroup(config, customer.getExternalCustomerId(), false);
+            log.info("Removed Treez customer {} from HEYMARY_LOYALTY group (card removed)", customer.getExternalCustomerId());
+            
+        } catch (Exception e) {
+            log.error("Error processing CardRemovedEvent for merchant {}: {}", merchantId, e.getMessage(), e);
+        }
+    }
+
+    /**
      * Sync customer to Treez POS
      * Flow: Boomerangme card installed → Link to or create Treez customer
      * Matches based on phone number
@@ -512,7 +570,7 @@ public class CustomerSyncService {
         
         if (existingCustomer != null) {
             // Customer exists - link card if not already linked
-            linkCardToCustomer(existingCustomer, card);
+            linkCardToCustomer(config, existingCustomer, card);
         } else {
             // No existing customer - create new one
             createNewTreezCustomer(config, card);
@@ -582,8 +640,9 @@ public class CustomerSyncService {
 
     /**
      * Link card to existing customer
+     * For Treez: ensures HEYMARY_LOYALTY group when customer has card installed
      */
-    private void linkCardToCustomer(Customer customer, Card card) {
+    private void linkCardToCustomer(IntegrationConfig config, Customer customer, Card card) {
         if (customer.getCard() == null || !customer.getCard().getId().equals(card.getId())) {
             String cardId = card.getSerialNumber() != null ? card.getSerialNumber() : card.getCardholderId();
             log.info("Linking card {} to existing customer {}", cardId, customer.getId());
@@ -593,13 +652,40 @@ public class CustomerSyncService {
             // Update customer info from card if different
             updateCustomerInfoFromCard(customer, card);
             
+            // Treez: add customer to HEYMARY_LOYALTY group and sync notes with points/rewards
+            if (customer.getIntegrationType() == IntegrationType.TREEZ && customer.getExternalCustomerId() != null) {
+                syncTreezCustomerGroup(config, customer.getExternalCustomerId(), true);
+                String existingNotes = null;
+                try {
+                    JsonNode treezCustomer = treezApiClient.getCustomer(config, customer.getExternalCustomerId()).block();
+                    existingNotes = CustomerNotesHelper.extractNotesFromTreezResponse(treezCustomer);
+                } catch (Exception e) {
+                    log.debug("Could not fetch Treez customer notes for merge: {}", e.getMessage());
+                }
+                int points = card.getBonusBalance() != null ? card.getBonusBalance() : 0;
+                syncTreezCustomerNotes(config, customer.getExternalCustomerId(), points,
+                        card.getTemplateId(), existingNotes);
+            }
+            
             customerRepository.save(customer);
             log.info("Successfully linked card to customer");
         } else {
             log.info("Card already linked to customer {}", customer.getId());
             
-            // Still update customer info to stay in sync
+            // Still update customer info and notes to stay in sync
             updateCustomerInfoFromCard(customer, card);
+            if (customer.getIntegrationType() == IntegrationType.TREEZ && customer.getExternalCustomerId() != null) {
+                String existingNotes = null;
+                try {
+                    JsonNode treezCustomer = treezApiClient.getCustomer(config, customer.getExternalCustomerId()).block();
+                    existingNotes = CustomerNotesHelper.extractNotesFromTreezResponse(treezCustomer);
+                } catch (Exception e) {
+                    log.debug("Could not fetch Treez customer notes for merge: {}", e.getMessage());
+                }
+                int points = card.getBonusBalance() != null ? card.getBonusBalance() : 0;
+                syncTreezCustomerNotes(config, customer.getExternalCustomerId(), points,
+                        card.getTemplateId(), existingNotes);
+            }
             customer.setSyncedAt(LocalDateTime.now());
             customerRepository.save(customer);
         }
@@ -688,9 +774,18 @@ public class CustomerSyncService {
             }
             
             // Optional: rewards balance
+            int points = card.getBonusBalance() != null ? card.getBonusBalance() : 0;
             if (card.getBonusBalance() != null) {
                 customerData.put("rewards_balance", card.getBonusBalance());
             }
+
+            // Notes with points and reward tiers (preserves user notes above delimiter on updates)
+            List<RewardTier> rewardTiers = rewardTierRepository.findByTemplateId(card.getTemplateId());
+            String notes = CustomerNotesHelper.buildNotesWithPointsAndRewards(null, points, rewardTiers);
+            customerData.put("notes", notes);
+            
+            // Customer has card installed - add to HEYMARY_LOYALTY group
+            customerData.put("customer_groups", java.util.List.of("HEYMARY_LOYALTY"));
             
             // Validate Treez credentials
             if (config.getTreezApiKey() == null || config.getTreezApiKey().isEmpty()) {
@@ -813,6 +908,13 @@ public class CustomerSyncService {
                     
                     // Link card to existing customer if found
                     if (treezCustomerId != null && !treezCustomerId.isEmpty()) {
+                        // Add customer to HEYMARY_LOYALTY group (card installed)
+                        syncTreezCustomerGroup(config, treezCustomerId, true);
+                        // Sync notes with points/rewards (preserve existing user notes)
+                        String existingNotes = existingCustomer != null ? CustomerNotesHelper.extractNotesFromTreezResponse(existingCustomer) : null;
+                        int points = card.getBonusBalance() != null ? card.getBonusBalance() : 0;
+                        syncTreezCustomerNotes(config, treezCustomerId, points, card.getTemplateId(), existingNotes);
+                        
                         Customer customer = Customer.builder()
                                 .merchantId(merchantId)
                                 .integrationType(IntegrationType.TREEZ)
@@ -965,6 +1067,52 @@ public class CustomerSyncService {
         
         if (updated) {
             log.info("Updated customer info from card data");
+        }
+    }
+
+    /**
+     * Sync HEYMARY_LOYALTY customer group in Treez based on card installation status
+     */
+    private void syncTreezCustomerGroup(IntegrationConfig config, String treezCustomerId, boolean hasCard) {
+        try {
+            Map<String, Object> updateData = new HashMap<>();
+            updateData.put("customer_groups", hasCard
+                    ? java.util.List.of("HEYMARY_LOYALTY")
+                    : Collections.emptyList());
+            treezApiClient.updateCustomer(config, treezCustomerId, updateData).block();
+            log.info("Synced Treez customer {} to HEYMARY_LOYALTY group: hasCard={}", treezCustomerId, hasCard);
+        } catch (Exception e) {
+            log.warn("Failed to sync Treez customer {} to HEYMARY_LOYALTY group: {}", treezCustomerId, e.getMessage());
+        }
+    }
+
+    /**
+     * Sync points and rewards to Treez customer notes.
+     * Preserves user notes above the delimiter; replaces the structured section between
+     * "--- DO NOT EDIT" markers with current points and reward tiers.
+     *
+     * @param config          Integration config
+     * @param treezCustomerId Treez customer ID
+     * @param points          Current points balance
+     * @param templateId      Template ID for reward tiers (from card)
+     * @param existingNotes   Current notes from Treez (null if new customer)
+     */
+    private void syncTreezCustomerNotes(IntegrationConfig config, String treezCustomerId,
+                                        int points, Integer templateId, String existingNotes) {
+        if (templateId == null) {
+            log.debug("Skipping notes sync: no template ID for customer {}", treezCustomerId);
+            return;
+        }
+        try {
+            List<RewardTier> rewardTiers = rewardTierRepository.findByTemplateId(templateId);
+            String notes = CustomerNotesHelper.buildNotesWithPointsAndRewards(existingNotes, points, rewardTiers);
+
+            Map<String, Object> updateData = new HashMap<>();
+            updateData.put("notes", notes);
+            treezApiClient.updateCustomer(config, treezCustomerId, updateData).block();
+            log.info("Synced Treez customer {} notes with points={}", treezCustomerId, points);
+        } catch (Exception e) {
+            log.warn("Failed to sync Treez customer {} notes: {}", treezCustomerId, e.getMessage());
         }
     }
 
@@ -1207,7 +1355,7 @@ public class CustomerSyncService {
             card.setSyncedAt(LocalDateTime.now());
             card = cardRepository.save(card);
             
-            // Update linked customer's total points if customer exists
+            // Update linked customer's total points and sync notes to Treez if customer exists
             Optional<Customer> customerOpt = customerRepository.findByCardId(card.getId());
             if (customerOpt.isPresent()) {
                 Customer customer = customerOpt.get();
@@ -1216,6 +1364,22 @@ public class CustomerSyncService {
                     customer.setSyncedAt(LocalDateTime.now());
                     customerRepository.save(customer);
                     log.info("Updated customer {} total points to {}", customer.getId(), card.getBonusBalance());
+
+                    // Sync notes to Treez when points change (Treez integration only)
+                    if (customer.getIntegrationType() == IntegrationType.TREEZ && customer.getExternalCustomerId() != null) {
+                        Optional<IntegrationConfig> configOpt = integrationConfigRepository.findByMerchantIdAndEnabledTrue(merchantId);
+                        if (configOpt.isPresent()) {
+                            String existingNotes = null;
+                            try {
+                                JsonNode treezCustomer = treezApiClient.getCustomer(configOpt.get(), customer.getExternalCustomerId()).block();
+                                existingNotes = CustomerNotesHelper.extractNotesFromTreezResponse(treezCustomer);
+                            } catch (Exception e) {
+                                log.debug("Could not fetch Treez customer notes for merge: {}", e.getMessage());
+                            }
+                            syncTreezCustomerNotes(configOpt.get(), customer.getExternalCustomerId(),
+                                    card.getBonusBalance(), card.getTemplateId(), existingNotes);
+                        }
+                    }
                 }
             }
             

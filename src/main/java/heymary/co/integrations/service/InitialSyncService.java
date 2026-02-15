@@ -1039,6 +1039,9 @@ public class InitialSyncService {
                 customerData.put("rewards_balance", card.getBonusBalance());
             }
             
+            // Customer has card installed - add to HEYMARY_LOYALTY group
+            customerData.put("customer_groups", java.util.List.of("HEYMARY_LOYALTY"));
+            
             log.info("Creating Treez customer for card {}: email={}, phone={}, name={} {}",
                     cardId, card.getCardholderEmail(), normalizedPhone, 
                     card.getCardholderFirstName(), card.getCardholderLastName());

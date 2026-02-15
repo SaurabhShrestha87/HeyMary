@@ -228,6 +228,13 @@ public class TreezWebhookService {
                 return;
             }
             
+            if (paymentStatus != null && paymentStatus.equals("REFUNDED")) {
+                // REFUND: Remove points from Boomerangme for orders that EARNED points.
+                // For orders that REDEEMED points: we do NOT give points back to the customer.
+                processRefundEvent(config, data, ticketId, merchantId, eventData);
+                return;
+            }
+            
             if (paymentStatus != null && !paymentStatus.equals("PAID")) {
                 log.info("Order {} has payment status '{}', not PAID - skipping sync", ticketId, paymentStatus);
                 createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
@@ -540,6 +547,126 @@ public class TreezWebhookService {
             
             createSyncLog(merchantId, SyncLog.SyncType.ORDER, ticketId,
                     SyncLog.SyncStatus.FAILED, e.getMessage(), toJsonString(eventData), null);
+        }
+    }
+
+    /**
+     * Process REFUND event: Remove points from Boomerangme for orders that EARNED points.
+     * For orders that REDEEMED points: we do NOT give points back to the customer.
+     * 
+     * Treez sends refund as a separate ticket with:
+     * - payment_status: REFUNDED
+     * - original_ticket_id: the original order being refunded
+     * - total: negative amount
+     */
+    private void processRefundEvent(IntegrationConfig config, JsonNode data, String refundTicketId,
+            String merchantId, JsonNode eventData) {
+        log.info("Processing Treez REFUND event for merchant: {}, refund ticket: {}", merchantId, refundTicketId);
+        
+        try {
+            // Idempotency: don't process same refund twice
+            String refundEntityId = "refund:" + refundTicketId;
+            if (syncLogRepository.existsByMerchantIdAndEntityId(merchantId, refundEntityId)) {
+                log.info("Refund {} already processed, skipping", refundTicketId);
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        "{\"status\":\"skipped\",\"message\":\"Refund already processed\"}");
+                return;
+            }
+            
+            // Extract original order ID (the order being refunded)
+            String originalTicketId = extractField(data, "original_ticket_id", "originalTicketId");
+            if (originalTicketId == null || originalTicketId.isEmpty()) {
+                log.warn("Refund {} has no original_ticket_id, cannot process", refundTicketId);
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        "{\"status\":\"skipped\",\"message\":\"Refund has no original_ticket_id\"}");
+                return;
+            }
+            
+            // Look up the original order
+            Optional<Order> originalOrderOpt = orderRepository.findByMerchantIdAndExternalOrderIdAndIntegrationType(
+                    merchantId, originalTicketId, IntegrationType.TREEZ);
+            
+            if (originalOrderOpt.isEmpty()) {
+                log.info("Original order {} not found for refund {} - may not have been synced, skipping", 
+                        originalTicketId, refundTicketId);
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        String.format("{\"status\":\"skipped\",\"message\":\"Original order %s not found\"}", originalTicketId));
+                return;
+            }
+            
+            Order originalOrder = originalOrderOpt.get();
+            int pointsEarned = originalOrder.getPointsEarned() != null ? originalOrder.getPointsEarned() : 0;
+            
+            // REDEEMED orders (pointsEarned < 0): we do NOT give points back to the customer
+            if (pointsEarned <= 0) {
+                log.info("Refund {} for original order {} - order had redeemed points ({}), not giving points back", 
+                        refundTicketId, originalTicketId, pointsEarned);
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                        SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                        String.format("{\"status\":\"skipped\",\"message\":\"Redeemed order - points not restored\",\"original_order\":\"%s\",\"points_earned\":%d}", 
+                                originalTicketId, pointsEarned));
+                return;
+            }
+            
+            // EARNED order: remove points from Boomerangme
+            Customer customer = originalOrder.getCustomer();
+            if (customer == null || customer.getCard() == null) {
+                log.warn("Refund {} - customer or card not found for original order {}, skipping", 
+                        refundTicketId, originalTicketId);
+                createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                        SyncLog.SyncStatus.FAILED, "Customer or card not found", toJsonString(eventData), null);
+                return;
+            }
+            
+            String cardIdForApi = customer.getCard().getSerialNumber() != null 
+                    ? customer.getCard().getSerialNumber() 
+                    : customer.getCard().getCardholderId();
+            
+            String refundReason = String.format("Refund for order #%s - %d points removed", 
+                    originalTicketId.length() > 8 ? originalTicketId.substring(0, 8) : originalTicketId, 
+                    pointsEarned);
+            
+            log.info("Removing {} points from Boomerangme card {} for refund {} (original order {})", 
+                    pointsEarned, cardIdForApi, refundTicketId, originalTicketId);
+            
+            JsonNode boomerangmeResponse = boomerangmeApiClient.subtractScoresFromCard(
+                    config.getBoomerangmeApiKey(),
+                    cardIdForApi,
+                    pointsEarned,
+                    refundReason
+            ).block();
+            
+            if (boomerangmeResponse == null) {
+                throw new RuntimeException("Null response from Boomerangme API");
+            }
+            
+            log.info("Successfully removed {} points from Boomerangme for refund {} (original order {})", 
+                    pointsEarned, refundTicketId, originalTicketId);
+            
+            createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                    SyncLog.SyncStatus.SUCCESS, null, toJsonString(eventData),
+                    String.format("{\"status\":\"success\",\"points_removed\":%d,\"original_order\":\"%s\"}", 
+                            pointsEarned, originalTicketId));
+            
+        } catch (Exception e) {
+            log.error("Error processing Treez REFUND event for merchant: {}, refund: {}: {}", 
+                    merchantId, refundTicketId, e.getMessage(), e);
+            
+            String refundEntityId = "refund:" + refundTicketId;
+            createSyncLog(merchantId, SyncLog.SyncType.ORDER, refundEntityId,
+                    SyncLog.SyncStatus.FAILED, e.getMessage(), toJsonString(eventData), null);
+            
+            deadLetterQueueService.addToDeadLetterQueue(
+                    merchantId,
+                    DeadLetterQueueService.SyncType.ORDER,
+                    DeadLetterQueueService.EntityType.ORDER,
+                    refundTicketId,
+                    "Refund processing failed: " + e.getMessage(),
+                    toJsonString(eventData)
+            );
         }
     }
 
