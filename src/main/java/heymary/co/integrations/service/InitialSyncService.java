@@ -1026,8 +1026,13 @@ public class InitialSyncService {
             customerData.put("gender", "U"); // U for unspecified
             customerData.put("banned", false);
             customerData.put("opt_out", false);
-            customerData.put("drivers_license", "N/A"); // Required field
-            customerData.put("drivers_license_expiration", "2030-12-31"); // Required field with drivers_license
+            // License expiration from Boomerangme - Treez requires drivers_license and drivers_license_expiration
+            customerData.put("drivers_license", "N/A");
+            if (card.getCardholderLicenseExpiration() != null) {
+                customerData.put("drivers_license_expiration", card.getCardholderLicenseExpiration().toString());
+            } else {
+                customerData.put("drivers_license_expiration", "2030-12-31"); // Default when not provided
+            }
             
             // Optional: rewards balance from Boomerangme
             if (card.getBonusBalance() != null && card.getBonusBalance() > 0) {

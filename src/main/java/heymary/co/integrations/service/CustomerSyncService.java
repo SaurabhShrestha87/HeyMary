@@ -679,6 +679,14 @@ public class CustomerSyncService {
             customerData.put("opt_out", false);
             customerData.put("addresses", new Object[0]); // Empty array
             
+            // License expiration from Boomerangme - Treez requires drivers_license and drivers_license_expiration
+            customerData.put("drivers_license", "N/A");
+            if (card.getCardholderLicenseExpiration() != null) {
+                customerData.put("drivers_license_expiration", card.getCardholderLicenseExpiration().format(DateTimeFormatter.ISO_LOCAL_DATE));
+            } else {
+                customerData.put("drivers_license_expiration", "2030-12-31"); // Default when not provided
+            }
+            
             // Optional: rewards balance
             if (card.getBonusBalance() != null) {
                 customerData.put("rewards_balance", card.getBonusBalance());
@@ -1060,6 +1068,14 @@ public class CustomerSyncService {
                 card.setCardholderBirthDate(LocalDate.parse(birthDateStr));
             } catch (Exception e) {
                 log.warn("Failed to parse birth date: {}", e.getMessage());
+            }
+        }
+        if (cardData.has("cardholder_license_expiration") && !cardData.get("cardholder_license_expiration").isNull()) {
+            try {
+                String licenseExpStr = cardData.get("cardholder_license_expiration").asText();
+                card.setCardholderLicenseExpiration(LocalDate.parse(licenseExpStr));
+            } catch (Exception e) {
+                log.warn("Failed to parse license expiration: {}", e.getMessage());
             }
         }
         if (cardData.has("bonus_balance") && !cardData.get("bonus_balance").isNull()) {

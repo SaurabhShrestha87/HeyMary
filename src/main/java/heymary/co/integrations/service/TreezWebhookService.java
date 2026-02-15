@@ -79,6 +79,8 @@ public class TreezWebhookService {
             String treezCustomerId = extractCustomerId(data);
             String email = extractField(data, "email", "customer_email", "emailAddress");
             String phone = extractField(data, "phone", "phone_number", "phoneNumber");
+            // Default to US country code (1) when Treez sends phone without country code
+            phone = normalizePhoneForBoomerangme(phone);
             String firstName = extractField(data, "first_name", "firstName", "fname");
             String lastName = extractField(data, "last_name", "lastName", "lname");
             
@@ -671,13 +673,23 @@ public class TreezWebhookService {
             }
         }
         
-        // Try phone if email didn't match
+        // Try phone if email didn't match (try normalized first, then without leading 1 for backward compatibility)
         if (phone != null && !phone.isEmpty()) {
             Optional<Customer> byPhone = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
                     merchantId, phone, IntegrationType.TREEZ);
             if (byPhone.isPresent()) {
                 log.info("Found Treez customer by phone: {}", phone);
                 return byPhone;
+            }
+            // Existing customers may have been stored without US country code (e.g. 6143752923)
+            String digitsOnly = phone.replaceAll("[^0-9]", "");
+            if (digitsOnly.length() == 11 && digitsOnly.startsWith("1")) {
+                Optional<Customer> byPhoneWithoutCountryCode = customerRepository.findByMerchantIdAndTreezPhoneAndIntegrationType(
+                        merchantId, digitsOnly.substring(1), IntegrationType.TREEZ);
+                if (byPhoneWithoutCountryCode.isPresent()) {
+                    log.info("Found Treez customer by phone (without country code): {}", digitsOnly.substring(1));
+                    return byPhoneWithoutCountryCode;
+                }
             }
         }
         
@@ -1307,6 +1319,14 @@ public class TreezWebhookService {
             }
         }
         
+        String licenseExp = extractFromCustomFields(cardData, "date");
+        if (licenseExp != null) {
+            try {
+                card.setCardholderLicenseExpiration(LocalDate.parse(licenseExp));
+            } catch (Exception e) {
+                log.warn("Failed to parse license expiration date from customFields: {}", e.getMessage());
+            }
+        }
         // Balance - webhook: bonus_balance, API: balance.bonusBalance
         if (cardData.has("bonus_balance") && !cardData.get("bonus_balance").isNull()) {
             card.setBonusBalance(cardData.get("bonus_balance").asInt());
@@ -1402,7 +1422,7 @@ public class TreezWebhookService {
     /**
      * Extract value from customFields array in API response
      * @param cardData Card data JSON node
-     * @param fieldType Type of field to extract (e.g., "phone", "email", "FName", "SName", "DateOfBirth")
+     * @param fieldType Type of field to extract (e.g., "phone", "email", "FName", "SName", "DateOfBirth", "date")
      * @return Field value or null if not found
      */
     private String extractFromCustomFields(JsonNode cardData, String fieldType) {

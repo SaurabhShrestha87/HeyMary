@@ -77,6 +77,9 @@ public class Card {
     @Column(name = "cardholder_birth_date")
     private LocalDate cardholderBirthDate;
 
+    @Column(name = "cardholder_license_expiration")
+    private LocalDate cardholderLicenseExpiration;
+
     // Card Metrics
     @Column(name = "bonus_balance")
     @Builder.Default
